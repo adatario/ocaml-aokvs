@@ -1,0 +1,19 @@
+#+TITLE: ocaml-omdb
+
+An OCaml Memory-mapped Database.
+
+* Rationale
+
+This is an experiment into a multicore capable database implemented in OCaml.
+
+Inspiration is taken from [[https://www.symas.com/lmdb][LMDB]] a key-value store implemented in C that scales linearly with readers.
+
+* Notes
+
+** Memory-map 
+
+The on-disk database is memory-mapped. This seems to also be available on Mirage (see [[https://mirage.io/blog/xen-block-devices-with-mirage][Creating Xen block devices with MirageOS]]).
+
+* License
+
+[[./LICENSES/ISC.txt][ISC]]
