@@ -8,6 +8,12 @@ This is an experiment into a multicore capable database implemented in OCaml.
 
 Inspiration is taken from [[https://www.symas.com/lmdb][LMDB]] a key-value store implemented in C that scales linearly with readers.
 
+* Development environment
+
+#+BEGIN_SRC bash
+guix time-machine -C channels.scm --disable-authentication -- shell -f -D guix.scm
+#+END_SRC
+
 * Notes
 
 ** Memory-map 
