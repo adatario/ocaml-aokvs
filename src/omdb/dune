@@ -1,0 +1,3 @@
+(library
+  (name omdb)
+  (libraries eio fmt))
