@@ -4,154 +4,197 @@
  * SPDX-License-Identifier: ISC
  *)
 
+(* open Eio *)
+
 type key = int
 type value = string
 type record = key * value
 
+let pp_key = Fmt.int
+let pp_value = Fmt.string
+let pp_record = Fmt.(parens @@ pair ~sep:comma pp_key pp_value)
 let page_size = 4096
 let branching_factor = 4
 
-module Records = struct
-  type t = record list
-
-  let sort = List.stable_sort (fun (a, _) (b, _) -> Int.compare a b)
-  let add records key value = (key, value) :: records |> sort
-
-  let find key =
-    List.find_opt (fun (record_key, value) ->
-        if record_key = key then true else false)
-
-  let split records =
-    List.(
-      mapi
-        (fun i record ->
-          if i <= branching_factor / 2 then Either.left record
-          else Either.right record)
-        records
-      |> partition_map Fun.id)
-
-  let min_key = function
-    | [ (min, _); _ ] -> min
-    | _ -> failwith "record is empty"
-
-  let max_key records =
-    match List.(nth records (length records - 1)) with max, _ -> max
-end
+module PageMap = Map.Make (Int)
 
 module Page = struct
-  type children = { entries : (t * key) list; right : t }
-  and t = Internal of children | Leaf of Records.t
+  type id = int
 
-  let pp_children ppf children =
-    let pivots = children.entries |> List.map snd in
-    Fmt.(pf ppf "%a" @@ brackets @@ list ~sep:semi int) pivots
+  let pp_id = Fmt.(styled `Cyan @@ int)
+
+  module Node = struct
+    type t = { entries : (id * key) list; right : id }
+
+    let pp ppf node =
+      let pp_entries =
+        Fmt.(brackets @@ list ~sep:semi @@ parens @@ pair ~sep:comma int pp_key)
+      in
+      Fmt.(pf ppf "%a; %a" pp_entries node.entries int node.right)
+
+    let search key node =
+      let rec iterate entries key =
+        match entries with
+        | (node, pivot) :: _ when key < pivot -> node
+        | _ :: tail -> iterate tail key
+        | [] -> node.right
+      in
+      iterate node.entries key
+
+    let replace ~old ~new' { entries; right } =
+      {
+        entries =
+          List.map
+            (fun (child, key) ->
+              if child = old then (new', key) else (child, key))
+            entries;
+        right = (if right = old then new' else right);
+      }
+  end
+
+  module Leaf = struct
+    type t = record list
+
+    let pp = Fmt.list
+    let sort = List.stable_sort (fun (a, _) (b, _) -> Int.compare a b)
+    let add key value leaf = (key, value) :: leaf |> sort
+
+    let find key =
+      List.find_opt (fun (record_key, _value) ->
+          if record_key = key then true else false)
+
+    let split records =
+      List.(
+        mapi
+          (fun i record ->
+            if i <= branching_factor / 2 then Either.left record
+            else Either.right record)
+          records
+        |> partition_map Fun.id)
+
+    let min_key = function
+      | [ (min, _); _ ] -> min
+      | _ -> failwith "record is empty"
+
+    let max_key records =
+      match List.(nth records (length records - 1)) with max, _ -> max
+  end
+
+  type t = Node of Node.t | Leaf of Leaf.t
+
+  let pp ppf page =
+    match page with
+    | Node node -> Fmt.pf ppf "@[Node %a@]" Node.pp node
+    | Leaf records ->
+        Fmt.pf ppf "@[Leaf %a@]"
+          Fmt.(brackets @@ list ~sep:semi pp_record)
+          records
 
   let count = function
-    | Internal { entries; _ } -> List.length entries
+    | Node { entries; _ } -> List.length entries
     | Leaf records -> List.length records
+end
 
-  let rec search children key =
-    let rec iterate entries key =
-      match entries with
-      | (node, pivot) :: _ when key < pivot -> node
-      | _ :: tail -> iterate tail key
-      | [] -> children.right
-    in
-    iterate children.entries key
+module Pages = struct
+  type t = Page.t PageMap.t ref
+  type allocator = { pages : t; next_free : Page.id }
 
-  let replace t ~old ~new' =
-    match t with
-    | Internal { entries; right } ->
-        Internal
-          {
-            entries =
-              List.map
-                (fun (child, key) ->
-                  if child = old then (new', key) else (child, key))
-                entries;
-            right = (if right = old then new' else right);
-          }
-    | Leaf _ -> t
+  let get pages id = PageMap.find id !pages
+
+  let set allocator page =
+    let page_ref = allocator.pages in
+    let id = allocator.next_free in
+    page_ref := PageMap.update id (Fun.const @@ Some page) !page_ref;
+    ({ allocator with next_free = allocator.next_free + 1 }, id)
+
+  let of_allocator allocator = allocator.pages
+
+  let get_node pages id =
+    match PageMap.find id !pages with
+    | Page.Node node -> node
+    | _ -> failwith "expecting node in get_node"
+
+  let get_leaf pages id =
+    match PageMap.find id !pages with
+    | Page.Leaf leaf -> leaf
+    | _ -> failwith "expecting leaf in get_leaf"
 end
 
 module Zipper = struct
   type t =
-    | RootLeaf of Records.t
-    | Root of Page.children
-    | Internal of { up : t; children : Page.children }
-    | Leaf of { up : t; records : Records.t }
+    | Node of { id : Page.id; up : t option }
+    | Leaf of { id : Page.id; up : t option }
 
-  let pp ppf t =
-    let pp_key = Fmt.int in
-    let pp_value = Fmt.string in
-    let pp_record = Fmt.(parens @@ pair ~sep:comma pp_key pp_value) in
+  let page_id = function Node { id; _ } -> id | Leaf { id; _ } -> id
+
+  let of_root ~pages id =
+    match Pages.get pages id with
+    | Page.Node _ -> Node { id; up = None }
+    | Page.Leaf _ -> Leaf { id; up = None }
+
+  let of_page ~pages up id =
+    match Pages.get pages id with
+    | Page.Node _ -> Node { id; up = Some up }
+    | Page.Leaf _ -> Leaf { id; up = Some up }
+
+  let rec search_page ~pages key t =
     match t with
-    | RootLeaf records ->
-        Fmt.pf ppf "@[RootLeaf %a@]"
-          Fmt.(brackets @@ list ~sep:semi pp_record)
-          records
-    | Root children -> Fmt.pf ppf "@[Root %a@]" Page.pp_children children
-    | _ -> Fmt.pf ppf "@[NODE?@]"
-
-  let init = RootLeaf []
-
-  let of_page up = function
-    | Page.Internal children -> Internal { up; children }
-    | Page.Leaf records -> Leaf { up; records }
-
-  let to_page = function
-    | RootLeaf records -> Page.Leaf records
-    | Leaf { records; _ } -> Page.Leaf records
-    | Internal { children; _ } -> Page.Internal children
-    | Root children -> Page.Internal children
-
-  let rec search_page t key =
-    match t with
-    | RootLeaf _ -> t
-    | Root children -> Page.search children key |> of_page t
-    | Internal { children; _ } -> Page.search children key |> of_page t
     | Leaf _ -> t
+    | Node { id; _ } ->
+        Pages.get_node pages id |> Page.Node.search key |> of_page ~pages t
+        |> search_page ~pages key
 
-  let page_records = function
-    | RootLeaf records -> records
-    | Leaf { records; _ } -> records
-    | Internal _ -> []
-    | Root _ -> []
+  let find_record ~pages key t =
+    search_page ~pages key t |> page_id |> Pages.get_leaf pages
+    |> Page.Leaf.find key
 
-  let find_record t key = search_page t key |> page_records |> Records.find key
+  let rec replace ~allocator ~old ~new' up =
+    let pages = Pages.of_allocator allocator in
+    match up with
+    | None -> (allocator, new')
+    | Some (Node { id; up }) ->
+        let node = Pages.get_node pages id |> Page.Node.replace ~old ~new' in
+        let allocator, page_id = Pages.set allocator (Page.Node node) in
+        replace ~allocator ~old:id ~new':page_id up
+    | Some (Leaf _) ->
+        failwith "unexpected leaf: cannot replace page id in leaf"
 
-  let rec replace_child t ~old ~new' =
-    match t with
-    | Root _ -> (
-        match Page.replace (to_page t) ~old ~new' with
-        | Page.Internal children -> Root children
-        | Page.Leaf _ -> failwith "expecting a root")
-    | Internal { up; _ } ->
-        replace_child up ~old:(to_page t)
-          ~new':(Page.replace (to_page t) ~old ~new')
-    | RootLeaf _ -> t
-    | Leaf _ -> t
-
-  let insert_record t key value =
-    match search_page t key with
-    | RootLeaf records ->
-        let records = Records.add records key value in
-        if List.length records > branching_factor then
-          let left, right = Records.split records in
-          let children : Page.children =
-            {
-              entries = [ (Page.Leaf left, Records.min_key right) ];
-              right = Page.Leaf right;
-            }
-          in
-          Root children
-        else RootLeaf records
-    | Leaf { up; records } as old ->
-        replace_child up ~old:(to_page old)
-          ~new':(Page.Leaf (Records.add records key value))
-    | _ -> failwith "unexpected internal node"
+  let insert_record ~allocator key value t =
+    let pages = Pages.of_allocator allocator in
+    match search_page ~pages key t with
+    | Leaf { id; up } ->
+        let leaf = Pages.get_leaf pages id |> Page.Leaf.add key value in
+        let page = Page.Leaf leaf in
+        let allocator, page_id = Pages.set allocator page in
+        replace ~allocator ~old:id ~new':page_id up
+    | Node _ -> failwith "unexpected node"
 end
 
-let init _ = Zipper.init
-let set key value db = Zipper.insert_record db key value
-let find db key = Zipper.find_record db key |> Option.map snd
+type t = {
+  pages : Pages.t;
+  mutable next_free : Page.id;
+  mutable root : Page.id;
+}
+
+let init _ =
+  let pages = ref PageMap.empty in
+  let init_allocator : Pages.allocator = { pages; next_free = 0 } in
+  let allocator, root = Pages.set init_allocator (Page.Leaf []) in
+  { pages; next_free = allocator.next_free; root }
+
+let set db key value =
+  let allocator : Pages.allocator =
+    { pages = db.pages; next_free = db.next_free }
+  in
+
+  let zipper = Zipper.of_root ~pages:db.pages db.root in
+
+  let allocator, root' = Zipper.insert_record ~allocator key value zipper in
+
+  db.next_free <- allocator.next_free;
+  db.root <- root'
+
+let find db key =
+  Zipper.of_root ~pages:db.pages db.root
+  |> Zipper.find_record ~pages:db.pages key
+  |> Option.map snd

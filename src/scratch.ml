@@ -22,13 +22,13 @@ let main mmap file =
   ignore file;
   traceln "\nmmap dim: %a" Fmt.(array ~sep:semi int) (Genarray.dims mmap);
 
-  let db =
-    Omdb.(
-      init mmap |> set 1 "hello" |> set 2 "bye" |> set 50 "wow"
-      |> set 123 "nope" |> set 42 "oh yeah")
-  in
+  let db = Omdb.init () in
 
-  traceln "%a" Omdb.Zipper.pp db;
+  Omdb.set db 1 "hello";
+  Omdb.set db 2 "two";
+  Omdb.set db 3 "three";
+  Omdb.set db 4 "four";
+  Omdb.set db 5 "five";
 
   traceln "%a" Fmt.(option string) @@ Omdb.find db 1
 
