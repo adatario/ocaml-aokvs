@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: ISC
  *)
 
-(* open Eio *)
+open Eio
 
 type key = int
 type value = string
@@ -62,6 +62,8 @@ module Page = struct
     let find key =
       List.find_opt (fun (record_key, _value) ->
           if record_key = key then true else false)
+
+    let count t = List.length t
 
     let split records =
       List.(
@@ -164,9 +166,22 @@ module Zipper = struct
     match search_page ~pages key t with
     | Leaf { id; up } ->
         let leaf = Pages.get_leaf pages id |> Page.Leaf.add key value in
-        let page = Page.Leaf leaf in
-        let allocator, page_id = Pages.set allocator page in
-        replace ~allocator ~old:id ~new':page_id up
+        if Page.Leaf.count leaf > branching_factor then
+          let left, right = Page.Leaf.split leaf in
+          let allocator, left_id = Pages.set allocator (Page.Leaf left) in
+          let allocator, right_id = Pages.set allocator (Page.Leaf right) in
+          let allocator, node_id =
+            Pages.set allocator
+              (Page.Node
+                 {
+                   entries = [ (left_id, Page.Leaf.min_key right) ];
+                   right = right_id;
+                 })
+          in
+          replace ~allocator ~old:id ~new':node_id up
+        else
+          let allocator, page_id = Pages.set allocator (Page.Leaf leaf) in
+          replace ~allocator ~old:id ~new':page_id up
     | Node _ -> failwith "unexpected node"
 end
 
@@ -186,6 +201,9 @@ let set db key value =
   let allocator : Pages.allocator =
     { pages = db.pages; next_free = db.next_free }
   in
+
+  let root = Pages.get db.pages db.root in
+  traceln "root: %a" Page.pp root;
 
   let zipper = Zipper.of_root ~pages:db.pages db.root in
 
