@@ -22,7 +22,10 @@
 	   libuv
 	   ocaml-fmt))
     (native-inputs
-     (list ocaml-merlin
+     (list ocaml-alcotest
+	   ocaml-qcheck
+	   ;; dev tools
+	   ocaml-merlin
 	   ocaml-dot-merlin-reader))
     (synopsis #f)
     (description #f)

@@ -6,9 +6,13 @@
 
 type key = int
 type value = string
+type record = key * value
 
-module Record = struct
-  type t = key * value
+let page_size = 4096
+let branching_factor = 4
+
+module Records = struct
+  type t = record list
 
   let sort = List.stable_sort (fun (a, _) (b, _) -> Int.compare a b)
   let add records key value = (key, value) :: records |> sort
@@ -16,13 +20,31 @@ module Record = struct
   let find key =
     List.find_opt (fun (record_key, value) ->
         if record_key = key then true else false)
-end
 
-let branching_factor = 4
+  let split records =
+    List.(
+      mapi
+        (fun i record ->
+          if i <= branching_factor / 2 then Either.left record
+          else Either.right record)
+        records
+      |> partition_map Fun.id)
+
+  let min_key = function
+    | [ (min, _); _ ] -> min
+    | _ -> failwith "record is empty"
+
+  let max_key records =
+    match List.(nth records (length records - 1)) with max, _ -> max
+end
 
 module Page = struct
   type children = { entries : (t * key) list; right : t }
-  and t = Internal of children | Leaf of Record.t list
+  and t = Internal of children | Leaf of Records.t
+
+  let pp_children ppf children =
+    let pivots = children.entries |> List.map snd in
+    Fmt.(pf ppf "%a" @@ brackets @@ list ~sep:semi int) pivots
 
   let count = function
     | Internal { entries; _ } -> List.length entries
@@ -54,10 +76,10 @@ end
 
 module Zipper = struct
   type t =
-    | RootLeaf of Record.t list
+    | RootLeaf of Records.t
     | Root of Page.children
     | Internal of { up : t; children : Page.children }
-    | Leaf of { up : t; records : Record.t list }
+    | Leaf of { up : t; records : Records.t }
 
   let pp ppf t =
     let pp_key = Fmt.int in
@@ -65,9 +87,10 @@ module Zipper = struct
     let pp_record = Fmt.(parens @@ pair ~sep:comma pp_key pp_value) in
     match t with
     | RootLeaf records ->
-        Fmt.pf ppf "RootLeaf %a"
+        Fmt.pf ppf "@[RootLeaf %a@]"
           Fmt.(brackets @@ list ~sep:semi pp_record)
           records
+    | Root children -> Fmt.pf ppf "@[Root %a@]" Page.pp_children children
     | _ -> Fmt.pf ppf "@[NODE?@]"
 
   let init = RootLeaf []
@@ -95,16 +118,7 @@ module Zipper = struct
     | Internal _ -> []
     | Root _ -> []
 
-  let find_record t key = search_page t key |> page_records |> Record.find key
-
-  let split_records records =
-    List.(
-      mapi
-        (fun i record ->
-          if i <= branching_factor / 2 then Either.left record
-          else Either.right record)
-        records
-      |> partition_map Fun.id)
+  let find_record t key = search_page t key |> page_records |> Records.find key
 
   let rec replace_child t ~old ~new' =
     match t with
@@ -121,11 +135,20 @@ module Zipper = struct
   let insert_record t key value =
     match search_page t key with
     | RootLeaf records ->
-        let records = Record.add records key value in
-        RootLeaf records
+        let records = Records.add records key value in
+        if List.length records > branching_factor then
+          let left, right = Records.split records in
+          let children : Page.children =
+            {
+              entries = [ (Page.Leaf left, Records.min_key right) ];
+              right = Page.Leaf right;
+            }
+          in
+          Root children
+        else RootLeaf records
     | Leaf { up; records } as old ->
         replace_child up ~old:(to_page old)
-          ~new':(Page.Leaf (Record.add records key value))
+          ~new':(Page.Leaf (Records.add records key value))
     | _ -> failwith "unexpected internal node"
 end
 
