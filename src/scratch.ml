@@ -27,12 +27,15 @@ let main mmap file =
   Omdb.set db 1 "hello";
   Omdb.set db 2 "two";
   Omdb.set db 3 "three";
-  Omdb.set db 4 "four";
   Omdb.set db 5 "five";
   Omdb.set db 42 "five";
   Omdb.set db 52 "five";
+  Omdb.set db 4 "four";
+  Omdb.set db 8 "five";
+  Omdb.set db 7 "five";
+  Omdb.set db 10 "ten";
 
-  traceln "%a" Fmt.(option string) @@ Omdb.find db 1
+  traceln "%a" Fmt.(option string) @@ Omdb.find db 7
 
 let () =
   Eio_main.run @@ fun env ->

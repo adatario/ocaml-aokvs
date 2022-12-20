@@ -63,7 +63,9 @@ module Page = struct
       List.find_opt (fun (record_key, _value) ->
           if record_key = key then true else false)
 
+    let mem key leaf = find key leaf |> Option.is_some
     let count t = List.length t
+    let delete key = List.filter (fun (record_key, _value) -> key <> record_key)
 
     let split records =
       List.(
@@ -182,7 +184,19 @@ module Zipper = struct
         else
           let allocator, page_id = Pages.set allocator (Page.Leaf leaf) in
           replace ~allocator ~old:id ~new':page_id up
-    | Node _ -> failwith "unexpected node"
+    | Node _ -> failwith "search_page returned a node"
+
+  let delete_key ~allocator key t =
+    let pages = Pages.of_allocator allocator in
+    match search_page ~pages key t with
+    | Leaf { id; up } ->
+        let leaf = Pages.get_leaf pages key in
+        if Page.Leaf.mem key leaf then
+          let leaf = Page.Leaf.delete key leaf in
+          let allocator, new_id = Pages.set allocator (Page.Leaf leaf) in
+          replace ~allocator ~old:id ~new':new_id up
+        else (allocator, id)
+    | Node _ -> failwith "search_page returned a node"
 end
 
 type t = {
