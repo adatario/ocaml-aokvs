@@ -6,7 +6,7 @@
 
 (** Page *)
 
-type key = int
+type key = string
 type value = string
 type record = key * value
 
@@ -19,66 +19,104 @@ val pp_id : id Fmt.t
 (** {1 Page Types} *)
 
 module Leaf : sig
+  (** A page that holds records *)
+
   type t
 
-  val pp : t Fmt.t
-  val empty : t
-  val sort : t -> t
-  val add : key -> value -> t -> t
-  val find : key -> t -> record option
-  val mem : key -> t -> bool
+  (** {1 Accessors} *)
+
   val count : t -> int
-  val delete : key -> t -> t
-  val split : t -> t * t
+  (** [count leaf] returns the number of records (key-value
+  pairs) contained in the leaf page [leaf].*)
+
+  val find : key -> t -> record option
+  (** [find key leaf] returns the record associated with [key] in [leaf]. *)
+
+  val mem : key -> t -> bool
   val min_key : t -> key
-  val max_key : t -> key
+
+  (** {1 Pretty-printing} *)
+
+  val pp : t Fmt.t
 end
 
 module Node : sig
-  type entry = { left : id; pivot : key }
-  type t = { entries : entry array; right : id }
+  type t
 
-  val of_two_leaves : id -> key -> id -> t
+  (** {1 Accessors} *)
+
+  val count : t -> int
 
   val child : int -> t -> id
   (** [child i node] returns the [i]th child of the node. *)
 
+  val search : key -> t -> int * id
+  (** [search key node] returns the id of the child. *)
+
+  val min_key : t -> key
+
+  (** {1 Pretty-printing} *)
+
   val pp : t Fmt.t
-  val search : key -> t -> int
-  val replace : old:id -> new':id -> t -> t
 end
 
-(** {1 Pages} *)
-
-module PageMap : Map.S with type key = id
+(** {1 Page} *)
 
 type t = Node of Node.t | Leaf of Leaf.t
 
+val to_node : t -> Node.t option
+val to_leaf : t -> Leaf.t option
+
+type t_id = id * t
+
 val pp : t Fmt.t
+
+module PageMap : Map.S with type key = id
 
 type pages = t PageMap.t ref
 
 val get : pages -> id -> t
-val get_node : pages -> id -> Node.t
 val get_leaf : pages -> id -> Leaf.t
-val set : pages -> id -> t -> unit
+val get_node : pages -> id -> Node.t
 
 (** {1 Allocator} *)
 
-module Allocator : sig
-  (** A monadic page allocator - a rough idea. A probably much neater
+(** A monadic page allocator - a rough idea. A probably much neater
   and worked-out way of doing this: https://okmij.org/ftp/Haskell/regions.html *)
 
+module Allocator : sig
   type 'a t
 
   val return : 'a -> 'a t
-  val alloc : id t
+  val id : unit -> id t
   val map : 'a t -> ('a -> 'b) -> 'b t
   val ( let+ ) : 'a t -> ('a -> 'b) -> 'b t
   val bind : 'a t -> ('a -> 'b t) -> 'b t
   val ( let* ) : 'a t -> ('a -> 'b t) -> 'b t
 
+  type split = (id, id * id) Either.t
+
+  module Leaf : sig
+    val alloc : record list -> id t
+    val add : key -> value -> Leaf.t -> split t
+  end
+
+  module Node : sig
+    val make : id -> id -> id t
+    (** [make child1 child2] allocates a new node page with children
+    [child1] and [child2]. *)
+
+    val replace_child : pos:int -> id -> Node.t -> id t
+    (** [replace_child ~pos child node] allocates a new node page
+    where the child at position [pos] is replaced with [child]. *)
+
+    val split_child : pos:int -> id -> id -> Node.t -> split t
+    (** [split_child ~pos child1 child2] allocates a new node page
+    where the child at position [pos] is replaced with the two
+    children [child1] and [child2]. *)
+  end
+
   module Unsafe : sig
-    val run : int -> 'a t -> 'a * int
+    val run : pages:pages -> next_free:int -> 'a t -> 'a * int
   end
 end

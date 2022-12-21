@@ -5,9 +5,9 @@
  *)
 
 module Kv = struct
-  module Map = Map.Make (Int)
+  module Map = Map.Make (String)
 
-  let gen_key = QCheck2.Gen.int
+  let gen_key = QCheck2.Gen.(int |> map string_of_int)
   let gen_value = QCheck2.Gen.string_printable
 
   type event = Set of Omdb.key * Omdb.value

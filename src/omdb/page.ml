@@ -6,34 +6,37 @@
 
 open Eio
 
-type key = int
+type key = string
 type value = string
 type record = key * value
 
-let pp_key = Fmt.int
+let pp_key = Fmt.string
 let pp_value = Fmt.string
 let pp_record = Fmt.(parens @@ pair ~sep:comma pp_key pp_value)
 let branching_factor = 4
+
+(** Page *)
 
 type id = int
 
 let pp_id = Fmt.(styled `Cyan @@ int)
 
+(* Page Types *)
+
 module Leaf = struct
   type t = record list
 
   let pp = Fmt.(brackets @@ list ~sep:semi pp_record)
-  let empty = []
-  let sort = List.stable_sort (fun (a, _) (b, _) -> Int.compare a b)
+  let sort = List.stable_sort (fun (a, _) (b, _) -> String.compare a b)
   let add key value leaf = (key, value) :: leaf |> sort
+  let count t = List.length t
 
   let find key =
     List.find_opt (fun (record_key, _value) ->
         if record_key = key then true else false)
 
   let mem key leaf = find key leaf |> Option.is_some
-  let count t = List.length t
-  let delete key = List.filter (fun (record_key, _value) -> key <> record_key)
+  (* let delete key = List.filter (fun (record_key, _value) -> key <> record_key) *)
 
   let split records =
     List.(
@@ -44,72 +47,71 @@ module Leaf = struct
         records
       |> partition_map Fun.id)
 
-  let min_key = function
-    | [ (min, _); _ ] -> min
-    | _ -> failwith "record is empty"
-
-  let max_key records =
-    match List.(nth records (length records - 1)) with max, _ -> max
+  let min_key records =
+    let min, _ = List.hd records in
+    min
 end
 
 module Node = struct
-  type entry = { left : id; pivot : key }
-  type t = { entries : entry array; right : id }
+  type t = { children : id list; pivots : key list }
 
-  let of_two_leaves left pivot right =
-    { entries = [| { left; pivot } |]; right }
+  let pp =
+    Fmt.(
+      record
+        [
+          field "children" (fun t -> t.children)
+          @@ brackets @@ list ~sep:semi pp_id;
+          field "pivots" (fun t -> t.pivots)
+          @@ brackets @@ list ~sep:semi pp_key;
+        ])
 
-  let pp ppf node =
-    let pp_entry ppf entry =
-      Fmt.(pf ppf "@[(%a,%a)@]" pp_id entry.left pp_key entry.pivot)
-    in
-    let pp_entries = Fmt.(brackets @@ array ~sep:semi @@ pp_entry) in
-    Fmt.(pf ppf "%a; %a" pp_entries node.entries int node.right)
-
-  let child i node =
-    if i < Array.length node.entries then
-      let entry = Array.get node.entries i in
-      entry.left
-    else node.right
+  let count node = List.length node.children
+  let child i node = List.nth node.children i
+  let right node = child (count node - 1) node
 
   let search key node =
-    (* TODO: binary search *)
-    let rec iterate entries c key =
-      match entries with
-      | { pivot; _ } :: _ when key < pivot -> c
-      | _ :: tail -> iterate tail (c + 1) key
-      | [] -> c
-    in
-    iterate (Array.to_list node.entries) 0 key
+    Seq.zip (List.to_seq node.children) (List.to_seq node.pivots)
+    |> Seq.mapi (fun pos (child, pivot) -> (pos, child, pivot))
+    |> Seq.find_map (fun (pos, child, pivot) ->
+           if key < pivot then Some (pos, child) else None)
+    |> Option.value ~default:(count node - 1, right node)
 
-  let replace ~old ~new' { entries; right } =
-    {
-      entries =
-        Array.map
-          (fun { left; pivot } ->
-            if left = old then { left = new'; pivot } else { left; pivot })
-          entries;
-      right = (if right = old then new' else right);
-    }
+  let replace_child ~pos ~pivot child node =
+    let pivot_pos = pos - 1 in
+    let pivots =
+      List.mapi (fun i p -> if i = pivot_pos then pivot else p) node.pivots
+    in
+    let children =
+      List.mapi (fun i c -> if i = pos then child else c) node.children
+    in
+    { children; pivots }
+
+  let min_key node = List.nth node.pivots 0
 end
+
+type t = Node of Node.t | Leaf of Leaf.t
+
+let to_node = function Node node -> Some node | _ -> None
+let to_leaf = function Leaf leaf -> Some leaf | _ -> None
+
+let min_key = function
+  | Node node -> Node.min_key node
+  | Leaf leaf -> Leaf.min_key leaf
+
+type t_id = id * t
 
 module PageMap = Map.Make (Int)
 
-type t = Node of Node.t | Leaf of Leaf.t
+type pages = t PageMap.t ref
 
 let pp ppf page =
   match page with
   | Node node -> Fmt.pf ppf "@[Node %a@]" Node.pp node
   | Leaf records -> Fmt.pf ppf "@[Leaf %a@]" Leaf.pp records
 
-type pages = t PageMap.t ref
-
 let get pages id =
   traceln "Page.get %a" pp_id id;
   PageMap.find id !pages
-
-let set pages id page =
-  pages := PageMap.update id (Fun.const @@ Some page) !pages
 
 let get_node pages id =
   match PageMap.find id !pages with
@@ -121,15 +123,24 @@ let get_leaf pages id =
   | Leaf leaf -> leaf
   | _ -> failwith "expecting leaf in get_leaf"
 
+(* Page Allocator *)
+
 module Allocator = struct
-  type allocator = { next_free : id }
+  type allocator = { next_free : id; pages : pages }
   type 'a t = allocator -> 'a * allocator
 
   let return v allocator = (v, allocator)
 
-  let alloc allocator =
-    traceln "allocating page %a" pp_id allocator.next_free;
-    (allocator.next_free, { next_free = allocator.next_free + 1 })
+  let id () allocator =
+    (allocator.next_free, { allocator with next_free = allocator.next_free + 1 })
+
+  let set_page page id allocator =
+    traceln "set_page - %a %a" pp_id id pp page;
+    allocator.pages :=
+      PageMap.update id (Fun.const @@ Some page) !(allocator.pages);
+    (id, allocator)
+
+  let get_page id allocator = (PageMap.find id !(allocator.pages), allocator)
 
   let map a f allocator =
     let v, allocator' = a allocator in
@@ -143,9 +154,89 @@ module Allocator = struct
 
   let ( let* ) = bind
 
+  type split = (id, id * id) Either.t
+
+  module Leaf = struct
+    let alloc records =
+      let* id = id () in
+      set_page (Leaf records) id
+
+    let add key value leaf =
+      traceln "Leaf.add %a %a %a" pp_key key pp_value value Leaf.pp leaf;
+      let leaf' = Leaf.add key value leaf in
+      if Leaf.count leaf' > branching_factor then
+        let left, right = Leaf.split leaf' in
+        let* left_id = alloc left in
+        let* right_id = alloc right in
+        return @@ Either.right (left_id, right_id)
+      else
+        let* id = alloc leaf' in
+        return @@ Either.left id
+  end
+
+  module Node = struct
+    let alloc node =
+      let* id = id () in
+      set_page (Node node) id
+
+    let get_min_key id =
+      let+ page = get_page id in
+      traceln "get_min_key %a %a" pp_id id pp page;
+      min_key page
+
+    let make child1 child2 =
+      let* pivot = get_min_key child2 in
+      alloc { children = [ child1; child2 ]; pivots = [ pivot ] }
+
+    let replace_child ~pos child (node : Node.t) =
+      let* pivot = get_min_key child in
+      Node.replace_child ~pos ~pivot child node |> alloc
+
+    let max_pivot = String.make 256 (Char.chr 255)
+
+    let node_of_seq seq : Node.t =
+      let children_seq, pivots_seq = Seq.unzip seq in
+      let children = List.of_seq children_seq in
+      let pivots =
+        List.of_seq @@ Seq.take (List.length children - 1) pivots_seq
+      in
+      { children; pivots }
+
+    let split_child ~pos child1 child2 (node : Node.t) =
+      let* pivot1 = get_min_key child1 in
+      let* pivot2 = get_min_key child2 in
+      let left_seq, right_seq =
+        Seq.zip
+          (List.to_seq node.children)
+          (Seq.append (List.to_seq node.pivots) (Seq.return max_pivot))
+        (* Insert the new children *)
+        |> Seq.mapi (fun i (child, pivot) ->
+               if i = pos - 1 then Seq.return (child, pivot1)
+               else if i = pos then
+                 List.to_seq [ (child1, pivot2); (child2, pivot) ]
+               else Seq.return (child, pivot))
+        |> Seq.concat
+        (* Split node *)
+        |> Seq.mapi (fun i child_pivot ->
+               if i <= branching_factor / 2 then Either.left child_pivot
+               else Either.right child_pivot)
+        |> Seq.partition_map Fun.id
+      in
+      if Seq.is_empty right_seq then
+        let node = node_of_seq left_seq in
+        let* id = alloc node in
+        return @@ Either.left id
+      else
+        let left = node_of_seq left_seq in
+        let right = node_of_seq right_seq in
+        let* left_id = alloc left in
+        let* right_id = alloc right in
+        return @@ Either.right (left_id, right_id)
+  end
+
   module Unsafe = struct
-    let run next_free t =
-      let v, { next_free } = t { next_free } in
+    let run ~pages ~next_free t =
+      let v, { next_free; _ } = t { next_free; pages } in
       (v, next_free)
   end
 end
