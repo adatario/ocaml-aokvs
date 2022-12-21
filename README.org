@@ -1,12 +1,12 @@
-#+TITLE: ocaml-omdb
+#+TITLE: omdb
 
 An OCaml Memory-mapped Database.
 
 * Rationale
 
-This is an experiment into a multicore capable database implemented in OCaml.
+This is an experiment into a multicore capable, Mirage ready database implemented in OCaml.
 
-Inspiration is taken from [[https://www.symas.com/lmdb][LMDB]] a key-value store implemented in C that scales linearly with readers.
+Inspiration is taken from [[https://www.symas.com/lmdb][LMDB]], a key-value store implemented in C that scales linearly with readers.
 
 * Development environment
 

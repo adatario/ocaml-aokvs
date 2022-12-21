@@ -1,7 +1,7 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: ocaml-omdb
+Upstream-Name: omdb
 Upstream-Contact: Tarides <contact@tarides.com>
-Source: https://github.com/adatario/ocaml-omdb
+Source: https://github.com/adatario/omdb
 
 # Sample paragraph, commented out:
 #
