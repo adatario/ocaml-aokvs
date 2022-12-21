@@ -18,17 +18,10 @@ val pp_id : id Fmt.t
 
 (** {1 Page Types} *)
 
-module Node : sig
-  type t = { entries : (id * key) list; right : id }
-
-  val pp : t Fmt.t
-  val search : key -> t -> id
-  val replace : old:id -> new':id -> t -> t
-end
-
 module Leaf : sig
   type t
 
+  val pp : t Fmt.t
   val empty : t
   val sort : t -> t
   val add : key -> value -> t -> t
@@ -39,6 +32,20 @@ module Leaf : sig
   val split : t -> t * t
   val min_key : t -> key
   val max_key : t -> key
+end
+
+module Node : sig
+  type entry = { left : id; pivot : key }
+  type t = { entries : entry array; right : id }
+
+  val of_two_leaves : id -> key -> id -> t
+
+  val child : int -> t -> id
+  (** [child i node] returns the [i]th child of the node. *)
+
+  val pp : t Fmt.t
+  val search : key -> t -> int
+  val replace : old:id -> new':id -> t -> t
 end
 
 (** {1 Pages} *)

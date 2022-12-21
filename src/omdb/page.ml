@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: ISC
  *)
 
+open Eio
+
 type key = int
 type value = string
 type record = key * value
@@ -17,38 +19,10 @@ type id = int
 
 let pp_id = Fmt.(styled `Cyan @@ int)
 
-module Node = struct
-  type t = { entries : (id * key) list; right : id }
-
-  let pp ppf node =
-    let pp_entries =
-      Fmt.(brackets @@ list ~sep:semi @@ parens @@ pair ~sep:comma int pp_key)
-    in
-    Fmt.(pf ppf "%a; %a" pp_entries node.entries int node.right)
-
-  let search key node =
-    let rec iterate entries key =
-      match entries with
-      | (node, pivot) :: _ when key < pivot -> node
-      | _ :: tail -> iterate tail key
-      | [] -> node.right
-    in
-    iterate node.entries key
-
-  let replace ~old ~new' { entries; right } =
-    {
-      entries =
-        List.map
-          (fun (child, key) ->
-            if child = old then (new', key) else (child, key))
-          entries;
-      right = (if right = old then new' else right);
-    }
-end
-
 module Leaf = struct
   type t = record list
 
+  let pp = Fmt.(brackets @@ list ~sep:semi pp_record)
   let empty = []
   let sort = List.stable_sort (fun (a, _) (b, _) -> Int.compare a b)
   let add key value leaf = (key, value) :: leaf |> sort
@@ -78,6 +52,47 @@ module Leaf = struct
     match List.(nth records (length records - 1)) with max, _ -> max
 end
 
+module Node = struct
+  type entry = { left : id; pivot : key }
+  type t = { entries : entry array; right : id }
+
+  let of_two_leaves left pivot right =
+    { entries = [| { left; pivot } |]; right }
+
+  let pp ppf node =
+    let pp_entry ppf entry =
+      Fmt.(pf ppf "@[(%a,%a)@]" pp_id entry.left pp_key entry.pivot)
+    in
+    let pp_entries = Fmt.(brackets @@ array ~sep:semi @@ pp_entry) in
+    Fmt.(pf ppf "%a; %a" pp_entries node.entries int node.right)
+
+  let child i node =
+    if i < Array.length node.entries then
+      let entry = Array.get node.entries i in
+      entry.left
+    else node.right
+
+  let search key node =
+    (* TODO: binary search *)
+    let rec iterate entries c key =
+      match entries with
+      | { pivot; _ } :: _ when key < pivot -> c
+      | _ :: tail -> iterate tail (c + 1) key
+      | [] -> c
+    in
+    iterate (Array.to_list node.entries) 0 key
+
+  let replace ~old ~new' { entries; right } =
+    {
+      entries =
+        Array.map
+          (fun { left; pivot } ->
+            if left = old then { left = new'; pivot } else { left; pivot })
+          entries;
+      right = (if right = old then new' else right);
+    }
+end
+
 module PageMap = Map.Make (Int)
 
 type t = Node of Node.t | Leaf of Leaf.t
@@ -85,14 +100,13 @@ type t = Node of Node.t | Leaf of Leaf.t
 let pp ppf page =
   match page with
   | Node node -> Fmt.pf ppf "@[Node %a@]" Node.pp node
-  | Leaf records ->
-      Fmt.pf ppf "@[Leaf %a@]"
-        Fmt.(brackets @@ list ~sep:semi pp_record)
-        records
+  | Leaf records -> Fmt.pf ppf "@[Leaf %a@]" Leaf.pp records
 
 type pages = t PageMap.t ref
 
-let get pages id = PageMap.find id !pages
+let get pages id =
+  traceln "Page.get %a" pp_id id;
+  PageMap.find id !pages
 
 let set pages id page =
   pages := PageMap.update id (Fun.const @@ Some page) !pages
@@ -114,6 +128,7 @@ module Allocator = struct
   let return v allocator = (v, allocator)
 
   let alloc allocator =
+    traceln "allocating page %a" pp_id allocator.next_free;
     (allocator.next_free, { next_free = allocator.next_free + 1 })
 
   let map a f allocator =
