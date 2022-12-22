@@ -11,7 +11,7 @@ Inspiration is taken from [[https://www.symas.com/lmdb][LMDB]], a key-value stor
 * Development environment
 
 #+BEGIN_SRC bash
-guix time-machine -C channels.scm --disable-authentication -- shell -f -D guix.scm
+  guix shell -Df guix.scm
 #+END_SRC
 
 * Notes

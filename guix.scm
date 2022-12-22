@@ -13,7 +13,7 @@
    (package
     (name "ocaml-omdb")
     (version "0.0.0")
-    (home-page "https://github.com/adatario/ocaml-omdb")
+    (home-page "https://github.com/adatario/omdb")
     (source (git-checkout (url (dirname (current-filename)))))
     (build-system dune-build-system)
     (propagated-inputs
