@@ -8,20 +8,21 @@ open Eio
 
 type key = string
 type value = string
-type record = key * value
 
-let pp_key = Fmt.string
-let pp_value = Fmt.string
-let pp_record = Fmt.(parens @@ pair ~sep:comma pp_key pp_value)
-let page_size = 4096
-let branching_factor = 4
+let pp_key = Fmt.(string)
+let pp_value = Fmt.(quote string)
 
 module Zipper = struct
   type t = {
     page : Page.t;
-    pos : int;
     id : Page.id;
-    up : t option;
+    (* the upper node and the child position *)
+    (* TODO: there's a bit more type safety we could gain. We know
+       that if there is an up, it is a node. e.g:
+
+       up : (node t * int) option
+    *)
+    up : (t * int) option;
     pages : Page.pages;
   }
 
@@ -31,25 +32,22 @@ module Zipper = struct
         [
           field "id" (fun t -> t.id) Page.pp_id;
           field "page" (fun t -> t.page) Page.pp;
-          field "pos" (fun t -> t.pos) int;
-          field "up[id]" (fun t -> Option.map (fun t -> t.id) t.up)
+          field "up[id]" (fun t -> Option.map (fun (t, _) -> t.id) t.up)
           @@ option Page.pp_id;
-          field "up[pos]" (fun t -> Option.map (fun t -> t.pos) t.up)
-          @@ option int;
+          field "up[pos]" (fun t -> Option.map snd t.up) @@ option int;
         ])
 
   let page_id t = t.id
-  let rec root_id t = match t.up with None -> t.id | Some up -> root_id up
-
-  let of_root ~pages id =
-    { page = Page.get pages id; pos = 0; id; up = None; pages }
+  let of_root ~pages id = { page = Page.get pages id; id; up = None; pages }
 
   let rec search_page key t =
+    traceln "search_page - key: %a, zipper: %a" pp_key key pp t;
     match t.page with
     | Leaf _ -> t
     | Node node ->
         let pos, id = Page.Node.search key node in
-        { t with page = Page.get t.pages id; id; pos; up = Some t }
+        traceln "search_page - pos: %d, id: %a" pos Page.pp_id id;
+        { t with page = Page.get t.pages id; id; up = Some (t, pos) }
         |> search_page key
 
   let find_record key t =
@@ -57,44 +55,65 @@ module Zipper = struct
     |> (Fun.flip Option.bind) (Page.Leaf.find key)
 
   (* Replace a single child in a node *)
-  let rec replace_child child t_opt =
+  let rec replace_child ~pos child t =
+    traceln "replce_child - child: %a, zipper: %a" Page.pp_id child pp t;
     let open Page.Allocator in
-    match t_opt with
-    | None ->
-        (* child is the new root *)
-        return child
-    | Some { page = Node node; up; pos; _ } ->
+    match t with
+    | { page = Node node; up = None; _ } ->
+        (* Node is root, replace with a new root and return. *)
+        Node.replace_child ~pos child node
+    | { page = Node node; up = Some (up, up_pos); _ } ->
         (* replace in current node and continue up the tree *)
         let* new_node_id = Node.replace_child ~pos child node in
-        replace_child new_node_id up
-    | Some { page = Leaf _; _ } ->
+        replace_child ~pos:up_pos new_node_id up
+    | { page = Leaf _; _ } ->
         failwith "unexpected leaf: cannot replace page id in leaf"
 
   (* Replace a single child with 2 children *)
-  let rec split_child child1 child2 t_opt =
+  let rec split_child ~pos child1 child2 t =
     let open Page.Allocator in
-    match t_opt with
-    | None ->
-        (* allocate a new root node *)
-        Node.make child1 child2
-    | Some { page = Node node; pos; up; _ } -> (
+    match t with
+    | { page = Node node; up = None; _ } -> (
+        (* we are the current root *)
         let* either_split = Node.split_child ~pos child1 child2 node in
         match either_split with
-        | Either.Left id -> replace_child id up
-        | Either.Right (left_id, right_id) -> split_child left_id right_id up)
-    | Some { page = Leaf _; _ } ->
-        failwith "replace_with_twins: unexpected leaf"
+        | Either.Left id ->
+            (* no need to split, we have a new root *)
+            return id
+        | Either.Right (left_id, right_id) ->
+            (* create a new root node with two children *)
+            Node.make left_id right_id)
+    | { page = Node node; up = Some (up, up_pos); _ } -> (
+        (* split the child and recurse up the tree *)
+        let* either_split = Node.split_child ~pos child1 child2 node in
+        match either_split with
+        | Either.Left id -> replace_child ~pos:up_pos id up
+        | Either.Right (left_id, right_id) ->
+            split_child ~pos:up_pos left_id right_id up)
+    | { page = Leaf _; _ } -> failwith "replace_with_twins: unexpected leaf"
 
-  let insert_record key value t =
-    traceln "insert_record %a %a" pp_key key pp_value value;
+  let rec insert_record key value t =
+    traceln "insert_record - key: %a, value: %a, zipper: %a" pp_key key pp_value
+      value pp t;
     let open Page.Allocator in
-    match search_page key t with
-    | { page = Leaf leaf; up; _ } -> (
+    match t with
+    | { page = Leaf leaf; up = None; _ } -> (
+        (* root leaf *)
         let* either_split = Leaf.add key value leaf in
         match either_split with
-        | Either.Left id -> replace_child id t.up
-        | Either.Right (left_id, right_id) -> split_child left_id right_id up)
-    | { page = Node _; _ } -> failwith "search_page returned a node"
+        | Either.Left id ->
+            (* return new leaf as root *)
+            return id
+        | Either.Right (left_id, right_id) ->
+            (* allocate a new node with two children as root *)
+            Node.make left_id right_id)
+    | { page = Leaf leaf; up = Some (up, up_pos); _ } -> (
+        let* either_split = Leaf.add key value leaf in
+        match either_split with
+        | Either.Left id -> replace_child ~pos:up_pos id up
+        | Either.Right (left_id, right_id) ->
+            split_child ~pos:up_pos left_id right_id up)
+    | { page = Node _; _ } -> search_page key t |> insert_record key value
 
   (* let merge_leaf ~pages leaf t = *)
   (*   let open Page.Allocator in *)
@@ -140,7 +159,7 @@ let init _ =
 
 let set db key value =
   let root = Page.get db.pages db.root in
-  traceln "root: %a" Page.pp root;
+  traceln "set - key: %s, value: %s, root: %a" key value Page.pp root;
 
   let zipper = Zipper.of_root ~pages:db.pages db.root in
 

@@ -25,15 +25,17 @@ let main mmap file =
   let db = Omdb.init () in
 
   Omdb.set db "hi" "hello";
+
   Omdb.set db "hi2" "hello";
   Omdb.set db "hi3" "hello";
   Omdb.set db "hi4" "hello";
   Omdb.set db "hi5" "hello";
-  Omdb.set db "hi6" "hello";
+
+  Omdb.set db "hi6" "six";
 
   (* Omdb.remove db 7; *)
   (* Omdb.remove db 8; *)
-  traceln "%a" Fmt.(option string) @@ Omdb.find db "hi"
+  traceln "%a" Fmt.(option string) @@ Omdb.find db "hi6"
 
 let () =
   Eio_main.run @@ fun env ->

@@ -11,7 +11,7 @@ type value = string
 type record = key * value
 
 let pp_key = Fmt.string
-let pp_value = Fmt.string
+let pp_value = Fmt.(quote string)
 let pp_record = Fmt.(parens @@ pair ~sep:comma pp_key pp_value)
 let branching_factor = 4
 
@@ -162,7 +162,8 @@ module Allocator = struct
       set_page (Leaf records) id
 
     let add key value leaf =
-      traceln "Leaf.add %a %a %a" pp_key key pp_value value Leaf.pp leaf;
+      traceln "Leaf.add - key: %a, value: %a, leaf: %a" pp_key key pp_value
+        value Leaf.pp leaf;
       let leaf' = Leaf.add key value leaf in
       if Leaf.count leaf' > branching_factor then
         let left, right = Leaf.split leaf' in

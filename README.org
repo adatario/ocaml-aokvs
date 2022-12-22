@@ -1,6 +1,7 @@
-#+TITLE: omdb
+#+TITLE: Omdb
+#+SUBTITLE: OCaml memory-mapped database
 
-An OCaml Memory-mapped Database.
+Omdb is an ordered key-value store implemented in pure OCaml.
 
 * Rationale
 
