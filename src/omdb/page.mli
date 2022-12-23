@@ -29,11 +29,12 @@ module Leaf : sig
   (** [count leaf] returns the number of records (key-value
   pairs) contained in the leaf page [leaf].*)
 
-  val find : key -> t -> record option
-  (** [find key leaf] returns the record associated with [key] in [leaf]. *)
+  val find_pos : t -> key -> int option
+  (** [find_pos leaf key] returns the position of the record with
+      associated [key] in [leaf]. *)
 
-  val mem : key -> t -> bool
-  val min_key : t -> key
+  val get : t -> int -> record
+  (** [get leaf pos] returns the record at position [pos] in [leaf]. *)
 
   (** {1 Pretty-printing} *)
 
@@ -52,8 +53,6 @@ module Node : sig
 
   val search : key -> t -> int * id
   (** [search key node] returns the id of the child. *)
-
-  val min_key : t -> key
 
   (** {1 Pretty-printing} *)
 
@@ -99,6 +98,7 @@ module Allocator : sig
   module Leaf : sig
     val alloc : record list -> id t
     val add : key -> value -> Leaf.t -> split t
+    val replace_value : pos:int -> value -> Leaf.t -> id t
   end
 
   module Node : sig

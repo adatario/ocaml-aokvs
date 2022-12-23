@@ -13,5 +13,5 @@ type value = string
 type t
 
 val init : unit -> t
-val set : t -> key -> value -> unit
+val update : t -> key -> (value option -> value option) -> unit
 val find : t -> key -> value option

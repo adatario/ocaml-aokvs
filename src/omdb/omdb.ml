@@ -16,88 +16,89 @@ module Zipper = struct
   type t = {
     page : Page.t;
     id : Page.id;
-    (* the upper node and the child position *)
+    (* the parent node and the position in parent that points here *)
     (* TODO: there's a bit more type safety we could gain. We know
        that if there is an up, it is a node. e.g:
 
-       up : (node t * int) option
+       parent: (node t * int) option
     *)
-    up : (t * int) option;
+    parent : (t * int) option;
     pages : Page.pages;
   }
 
-  let pp =
+  let pp ppf =
     Fmt.(
-      record
-        [
-          field "id" (fun t -> t.id) Page.pp_id;
-          field "page" (fun t -> t.page) Page.pp;
-          field "up[id]" (fun t -> Option.map (fun (t, _) -> t.id) t.up)
-          @@ option Page.pp_id;
-          field "up[pos]" (fun t -> Option.map snd t.up) @@ option int;
-        ])
+      pf ppf "@[<7><Zipper %a>@]"
+      @@ record
+           [
+             field "id" (fun t -> t.id) Page.pp_id;
+             field "page" (fun t -> t.page) Page.pp;
+             field "parent[id]" (fun t ->
+                 Option.map (fun (t, _) -> t.id) t.parent)
+             @@ option Page.pp_id;
+             field "parent[pos]" (fun t -> Option.map snd t.parent)
+             @@ option int;
+           ])
 
   let page_id t = t.id
-  let of_root ~pages id = { page = Page.get pages id; id; up = None; pages }
+  let of_root ~pages id = { page = Page.get pages id; id; parent = None; pages }
+
+  let rec to_root t =
+    match t with
+    | { parent = None; _ } -> t
+    | { parent = Some (up, _); _ } -> to_root up
+
+  let root_id t = to_root t |> page_id
 
   let rec search_page key t =
-    traceln "search_page - key: %a, zipper: %a" pp_key key pp t;
+    (* traceln "search_page - key: %a, zipper: %a" pp_key key pp t; *)
     match t.page with
     | Leaf _ -> t
     | Node node ->
         let pos, id = Page.Node.search key node in
-        traceln "search_page - pos: %d, id: %a" pos Page.pp_id id;
-        { t with page = Page.get t.pages id; id; up = Some (t, pos) }
+        { t with page = Page.get t.pages id; id; parent = Some (t, pos) }
         |> search_page key
 
   let find_record key t =
-    search_page key t |> page_id |> Page.get t.pages |> Page.to_leaf
-    |> (Fun.flip Option.bind) (Page.Leaf.find key)
+    match search_page key t with
+    | { page = Leaf leaf; _ } ->
+        Page.Leaf.find_pos leaf key |> Option.map (Page.Leaf.get leaf)
+    | _ -> failwith "search_page returned a node"
 
-  (* Replace a single child in a node *)
-  let rec replace_child ~pos child t =
-    traceln "replce_child - child: %a, zipper: %a" Page.pp_id child pp t;
+  let rec replace_in_parent new_child_id t =
     let open Page.Allocator in
-    match t with
-    | { page = Node node; up = None; _ } ->
-        (* Node is root, replace with a new root and return. *)
-        Node.replace_child ~pos child node
-    | { page = Node node; up = Some (up, up_pos); _ } ->
-        (* replace in current node and continue up the tree *)
-        let* new_node_id = Node.replace_child ~pos child node in
-        replace_child ~pos:up_pos new_node_id up
-    | { page = Leaf _; _ } ->
-        failwith "unexpected leaf: cannot replace page id in leaf"
+    match t.parent with
+    | Some (({ page = Node node; _ } as grand_parent), pos) ->
+        let* new_id = Node.replace_child ~pos new_child_id node in
+        replace_in_parent new_id grand_parent
+    | Some ({ page = Leaf _; _ }, _) -> failwith "parent is a leaf"
+    | None -> return new_child_id
 
-  (* Replace a single child with 2 children *)
-  let rec split_child ~pos child1 child2 t =
+  let rec split_in_parent left_child right_child t =
     let open Page.Allocator in
-    match t with
-    | { page = Node node; up = None; _ } -> (
-        (* we are the current root *)
-        let* either_split = Node.split_child ~pos child1 child2 node in
+    match t.parent with
+    | Some (({ page = Node node; _ } as grand_parent), pos) -> (
+        (* split child in node *)
+        let* either_split = Node.split_child ~pos left_child right_child node in
+
         match either_split with
-        | Either.Left id ->
-            (* no need to split, we have a new root *)
-            return id
+        | Either.Left new_id ->
+            (* node did not split, replace new id in grand parent *)
+            replace_in_parent new_id grand_parent
         | Either.Right (left_id, right_id) ->
-            (* create a new root node with two children *)
-            Node.make left_id right_id)
-    | { page = Node node; up = Some (up, up_pos); _ } -> (
-        (* split the child and recurse up the tree *)
-        let* either_split = Node.split_child ~pos child1 child2 node in
-        match either_split with
-        | Either.Left id -> replace_child ~pos:up_pos id up
-        | Either.Right (left_id, right_id) ->
-            split_child ~pos:up_pos left_id right_id up)
-    | { page = Leaf _; _ } -> failwith "replace_with_twins: unexpected leaf"
+            (* node split into two nodes, replace in grand parent *)
+            split_in_parent left_id right_id grand_parent)
+    | Some ({ page = Leaf _; _ }, _) -> failwith "parent is a leaf"
+    | None ->
+        (* create a new root node with two children *)
+        Node.make left_child right_child
 
   let rec insert_record key value t =
-    traceln "insert_record - key: %a, value: %a, zipper: %a" pp_key key pp_value
-      value pp t;
+    traceln "Omdb.insert_record ~key:%a ~value:%a %a" pp_key key pp_value value
+      pp t;
     let open Page.Allocator in
     match t with
-    | { page = Leaf leaf; up = None; _ } -> (
+    | { page = Leaf leaf; parent = None; _ } -> (
         (* root leaf *)
         let* either_split = Leaf.add key value leaf in
         match either_split with
@@ -107,13 +108,57 @@ module Zipper = struct
         | Either.Right (left_id, right_id) ->
             (* allocate a new node with two children as root *)
             Node.make left_id right_id)
-    | { page = Leaf leaf; up = Some (up, up_pos); _ } -> (
+    | { page = Leaf leaf; _ } -> (
         let* either_split = Leaf.add key value leaf in
         match either_split with
-        | Either.Left id -> replace_child ~pos:up_pos id up
-        | Either.Right (left_id, right_id) ->
-            split_child ~pos:up_pos left_id right_id up)
+        | Either.Left id -> replace_in_parent id t
+        | Either.Right (left_id, right_id) -> split_in_parent left_id right_id t
+        )
     | { page = Node _; _ } -> search_page key t |> insert_record key value
+
+  let replace_record_value ~pos value t =
+    let open Page.Allocator in
+    match t with
+    | { page = Leaf leaf; _ } ->
+        let* id = Leaf.replace_value ~pos value leaf in
+        replace_in_parent id t
+    | _ -> failwith "called replace record value on node"
+
+  let delete_record ~pos t =
+    let open Page.Allocator in
+    ignore pos;
+    return t.id
+
+  let rec update key f t =
+    match t with
+    | { page = Leaf leaf; _ } -> (
+        let open Page.Allocator in
+        match Page.Leaf.find_pos leaf key with
+        (* record exists *)
+        | Some pos -> (
+            let value = Page.Leaf.get leaf pos |> snd in
+            match f (Some value) with
+            | Some new_value when value <> new_value ->
+                (* replace value *)
+                replace_record_value ~pos new_value t
+            | Some _ ->
+                (* nothing to do, return the root id *)
+                return @@ root_id t
+            | None ->
+                (* delete record *)
+                delete_record ~pos t)
+        (* no record yet*)
+        | None -> (
+            match f None with
+            | Some value ->
+                (* insert a new record *)
+                insert_record key value t
+            | None ->
+                (* nothing to do, return the root id *)
+                return @@ root_id t))
+    | { page = Node _; _ } ->
+        (* not yet at leaf *)
+        search_page key t |> update key f
 
   (* let merge_leaf ~pages leaf t = *)
   (*   let open Page.Allocator in *)
@@ -148,6 +193,13 @@ end
 
 type t = { pages : Page.pages; mutable next_free : int; mutable root : Page.id }
 
+let dump db =
+  Page.PageMap.iter
+    (fun id page -> traceln "id: %a, page: %a" Page.pp_id id Page.pp page)
+    !(db.pages);
+
+  traceln "root: %a" Page.pp_id db.root
+
 let init _ =
   let pages = ref Page.PageMap.empty in
 
@@ -157,39 +209,18 @@ let init _ =
 
   { pages; next_free; root }
 
-let set db key value =
-  let root = Page.get db.pages db.root in
-  traceln "set - key: %s, value: %s, root: %a" key value Page.pp root;
-
-  let zipper = Zipper.of_root ~pages:db.pages db.root in
-
+let update db key f =
   let root', next_free =
-    Page.Allocator.Unsafe.run ~pages:db.pages ~next_free:db.next_free
-    @@ Zipper.insert_record key value zipper
+    Zipper.of_root ~pages:db.pages db.root
+    |> Zipper.update key f
+    |> Page.Allocator.Unsafe.run ~pages:db.pages ~next_free:db.next_free
   in
 
   db.next_free <- next_free;
-  db.root <- root'
+  db.root <- root';
 
-(* let remove db key = *)
-(*   let root = Page.get db.pages db.root in *)
-(*   traceln "remove - root: %a" Page.pp root; *)
-(*   let zipper = Zipper.of_root ~pages:db.pages db.root in *)
-
-(*   let new_root_id, next_free = *)
-(*     Page.Allocator.Unsafe.run db.next_free *)
-(*     @@ Zipper.remove_key ~pages:db.pages key zipper *)
-(*   in *)
-
-(*   let root = Page.get db.pages new_root_id in *)
-(*   traceln "remove - new_root: %a" Page.pp root; *)
-
-(*   db.next_free <- next_free; *)
-(*   db.root <- new_root_id *)
+  dump db
 
 let find db key =
-  traceln "find %a" pp_key key;
-  let root = Page.get db.pages db.root in
-  traceln "find - root: %a" Page.pp root;
   Zipper.of_root ~pages:db.pages db.root
   |> Zipper.find_record key |> Option.map snd
