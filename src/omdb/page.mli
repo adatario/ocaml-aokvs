@@ -43,6 +43,7 @@ end
 
 module Node : sig
   type t
+  type child = { id : id; min_key : key }
 
   (** {1 Accessors} *)
 
@@ -65,6 +66,7 @@ type t = Node of Node.t | Leaf of Leaf.t
 
 val to_node : t -> Node.t option
 val to_leaf : t -> Leaf.t option
+val min_key : t -> key
 
 type t_id = id * t
 
@@ -93,24 +95,24 @@ module Allocator : sig
   val bind : 'a t -> ('a -> 'b t) -> 'b t
   val ( let* ) : 'a t -> ('a -> 'b t) -> 'b t
 
-  type split = (id, id * id) Either.t
+  type split = (Node.child, Node.child * Node.child) Either.t
 
   module Leaf : sig
-    val alloc : record list -> id t
+    val alloc : record list -> Node.child t
     val add : key -> value -> Leaf.t -> split t
-    val replace_value : pos:int -> value -> Leaf.t -> id t
+    val replace_value : pos:int -> value -> Leaf.t -> Node.child t
   end
 
   module Node : sig
-    val make : id -> id -> id t
+    val make : Node.child -> Node.child -> Node.child t
     (** [make child1 child2] allocates a new node page with children
     [child1] and [child2]. *)
 
-    val replace_child : pos:int -> id -> Node.t -> id t
+    val replace_child : pos:int -> Node.child -> Node.t -> Node.child t
     (** [replace_child ~pos child node] allocates a new node page
     where the child at position [pos] is replaced with [child]. *)
 
-    val split_child : pos:int -> id -> id -> Node.t -> split t
+    val split_child : pos:int -> Node.child -> Node.child -> Node.t -> split t
     (** [split_child ~pos child1 child2] allocates a new node page
     where the child at position [pos] is replaced with the two
     children [child1] and [child2]. *)

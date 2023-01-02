@@ -36,8 +36,8 @@ let main mmap file =
       (7, 0);
       (50, 0);
       (1, 0);
-      (2, 0);
-      (51, 0);
+      (* (2, 0); *)
+      (* (51, 0); *)
     ]
   in
 
@@ -47,16 +47,16 @@ let main mmap file =
         (Fun.const @@ Option.some @@ string_of_int value))
     inserts;
 
-  List.iter
-    (fun (key, expected_value) ->
-      let value_opt = Omdb.find db (string_of_int key) in
+  (* List.iter *)
+  (*   (fun (key, expected_value) -> *)
+  (*     let value_opt = Omdb.find db (string_of_int key) in *)
 
-      traceln "key: %a; value: %a; expected_value: %s" Fmt.string
-        (string_of_int key)
-        Fmt.(option string)
-        value_opt
-        (string_of_int expected_value))
-    inserts;
+  (*     traceln "key: %a; value: %a; expected_value: %s" Fmt.string *)
+  (*       (string_of_int key) *)
+  (*       Fmt.(option string) *)
+  (*       value_opt *)
+  (*       (string_of_int expected_value)) *)
+  (*   inserts; *)
 
   (* Omdb.update db "hi" (Fun.const @@ Option.some "hello"); *)
 
@@ -70,7 +70,7 @@ let main mmap file =
 
   (* Omdb.remove db 7; *)
   (* Omdb.remove db 8; *)
-  traceln "%a" Fmt.(option string) @@ Omdb.find db "5"
+  traceln "%a" Fmt.(option string) @@ Omdb.find db "3"
 
 let () =
   Eio_main.run @@ fun env ->

@@ -40,7 +40,6 @@ module Zipper = struct
              @@ option int;
            ])
 
-  let page_id t = t.id
   let of_root ~pages id = { page = Page.get pages id; id; parent = None; pages }
 
   let rec to_root t =
@@ -48,10 +47,14 @@ module Zipper = struct
     | { parent = None; _ } -> t
     | { parent = Some (up, _); _ } -> to_root up
 
-  let root_id t = to_root t |> page_id
+  let root_child t : Page.Node.child =
+    let root = to_root t in
+    let id = root.id in
+    let min_key = Page.min_key root.page in
+    { id; min_key }
 
   let rec search_page key t =
-    (* traceln "search_page - key: %a, zipper: %a" pp_key key pp t; *)
+    traceln "search_page - key: %a, zipper: %a" pp_key key pp t;
     match t.page with
     | Leaf _ -> t
     | Node node ->
@@ -65,14 +68,14 @@ module Zipper = struct
         Page.Leaf.find_pos leaf key |> Option.map (Page.Leaf.get leaf)
     | _ -> failwith "search_page returned a node"
 
-  let rec replace_in_parent new_child_id t =
+  let rec replace_in_parent (new_child : Page.Node.child) t =
     let open Page.Allocator in
     match t.parent with
     | Some (({ page = Node node; _ } as grand_parent), pos) ->
-        let* new_id = Node.replace_child ~pos new_child_id node in
+        let* new_id = Node.replace_child ~pos new_child node in
         replace_in_parent new_id grand_parent
     | Some ({ page = Leaf _; _ }, _) -> failwith "parent is a leaf"
-    | None -> return new_child_id
+    | None -> return new_child
 
   let rec split_in_parent left_child right_child t =
     let open Page.Allocator in
@@ -127,7 +130,7 @@ module Zipper = struct
   let delete_record ~pos t =
     let open Page.Allocator in
     ignore pos;
-    return t.id
+    return @@ root_child t
 
   let rec update key f t =
     match t with
@@ -143,7 +146,7 @@ module Zipper = struct
                 replace_record_value ~pos new_value t
             | Some _ ->
                 (* nothing to do, return the root id *)
-                return @@ root_id t
+                return @@ root_child t
             | None ->
                 (* delete record *)
                 delete_record ~pos t)
@@ -155,7 +158,7 @@ module Zipper = struct
                 insert_record key value t
             | None ->
                 (* nothing to do, return the root id *)
-                return @@ root_id t))
+                return @@ root_child t))
     | { page = Node _; _ } ->
         (* not yet at leaf *)
         search_page key t |> update key f
@@ -207,17 +210,17 @@ let init _ =
     Page.Allocator.Unsafe.run ~pages ~next_free:0 Page.Allocator.(Leaf.alloc [])
   in
 
-  { pages; next_free; root }
+  { pages; next_free; root = root.id }
 
 let update db key f =
-  let root', next_free =
+  let root, next_free =
     Zipper.of_root ~pages:db.pages db.root
     |> Zipper.update key f
     |> Page.Allocator.Unsafe.run ~pages:db.pages ~next_free:db.next_free
   in
 
   db.next_free <- next_free;
-  db.root <- root';
+  db.root <- root.id;
 
   dump db
 

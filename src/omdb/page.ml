@@ -53,50 +53,63 @@ module Leaf = struct
         records
       |> partition_map Fun.id)
 
-  let min_key records =
-    let min, _ = List.hd records in
-    min
+  let min_key records = match records with (key, _) :: _ -> key | [] -> "SDFS"
 end
 
 module Node = struct
-  type t = { children : id list; pivots : key list }
+  type child = { id : id; min_key : key }
+  type t = child list
 
   let pp =
     Fmt.(
-      record
-        [
-          field "children" (fun t -> t.children)
-          @@ brackets @@ list ~sep:semi pp_id;
-          field "pivots" (fun t -> t.pivots)
-          @@ brackets @@ list ~sep:semi pp_key;
-        ])
+      brackets @@ list ~sep:semi
+      @@ record
+           [
+             field "id" (fun t -> t.id) pp_id;
+             field "min_key" (fun t -> t.min_key) pp_key;
+           ])
 
-  let count node = List.length node.children
-  let child i node = List.nth node.children i
-  let right node = child (count node - 1) node
+  let count node = List.length node
+  let child i node = List.nth node i |> fun child -> child.id
 
   let search key node =
-    Seq.zip (List.to_seq node.children) (List.to_seq node.pivots)
+    (* Sequence of pivots of the node. The lenght of the sequence is
+       equal to the lenght of children. The last pivot is None. *)
+    let pivots =
+      node |> List.to_seq
+      (* the first min_key is not used as pivot *)
+      |> Seq.drop 1
+      |> Seq.map (fun child -> Option.some child.min_key)
+      (* the last child does not need a pivot *)
+      |> fun pivots -> Seq.(append pivots (return None))
+    in
+
+    let child_ids = node |> List.to_seq |> Seq.map (fun child -> child.id) in
+    Seq.zip child_ids pivots
     |> Seq.mapi (fun pos (child, pivot) -> (pos, child, pivot))
     |> Seq.find_map (fun (pos, child, pivot) ->
-           if key < pivot then Some (pos, child) else None)
-    |> Option.value ~default:(count node - 1, right node)
+           match pivot with
+           | Some pivot -> if key < pivot then Some (pos, child) else None
+           | None -> Some (pos, child))
+    |> Option.get
 
-  let replace_child ~pos ~pivot child node =
-    let pivot_pos = pos - 1 in
-    let pivots =
-      List.mapi (fun i p -> if i = pivot_pos then pivot else p) node.pivots
-    in
-    let children =
-      List.mapi (fun i c -> if i = pos then child else c) node.children
-    in
-    { children; pivots }
+  let replace_child ~pos new_child node =
+    List.mapi (fun i c -> if i = pos then new_child else c) node
+
+  let min_key node =
+    match node with
+    | { min_key; _ } :: _ -> min_key
+    | _ -> failwith "node can not be empty"
 end
 
 type t = Node of Node.t | Leaf of Leaf.t
 
 let to_node = function Node node -> Some node | _ -> None
 let to_leaf = function Leaf leaf -> Some leaf | _ -> None
+
+let min_key = function
+  | Node node -> Node.min_key node
+  | Leaf leaf -> Leaf.min_key leaf
 
 type t_id = id * t
 
@@ -132,13 +145,13 @@ module Allocator = struct
   let id () allocator =
     (allocator.next_free, { allocator with next_free = allocator.next_free + 1 })
 
-  let set_page page id allocator =
+  let set_page page id : Node.child t =
+   fun allocator ->
     traceln "set_page  ~id:%a ~page:%a" pp_id id pp page;
+    let min_key = min_key page in
     allocator.pages :=
       PageMap.update id (Fun.const @@ Some page) !(allocator.pages);
-    (id, allocator)
-
-  let get_page id allocator = (PageMap.find id !(allocator.pages), allocator)
+    ({ id; min_key }, allocator)
 
   let map a f allocator =
     let v, allocator' = a allocator in
@@ -152,10 +165,7 @@ module Allocator = struct
 
   let ( let* ) = bind
 
-  type split = (id, id * id) Either.t
-
-  (* TODO: merge Allocator.{Leaf,Node} with the modules above. *)
-  let leaf_min_key = Leaf.min_key
+  type split = (Node.child, Node.child * Node.child) Either.t
 
   module Leaf = struct
     let alloc records =
@@ -185,47 +195,20 @@ module Allocator = struct
       let* id = id () in
       set_page (Node node) id
 
-    let rec get_min_key id =
-      let* page = get_page id in
-      traceln "Node.get_min_key ~id:%a ~page:%a" pp_id id pp page;
-      match page with
-      | Leaf leaf -> return @@ leaf_min_key leaf
-      | Node { children = child :: _; _ } -> get_min_key child
-      | Node { children = []; _ } -> failwith "node does not have children"
-
-    let make child1 child2 =
-      let* pivot = get_min_key child2 in
-      alloc { children = [ child1; child2 ]; pivots = [ pivot ] }
+    let make child1 child2 = alloc [ child1; child2 ]
 
     let replace_child ~pos child (node : Node.t) =
-      let* pivot = get_min_key child in
-      Node.replace_child ~pos ~pivot child node |> alloc
-
-    let max_pivot = String.make 256 (Char.chr 255)
-
-    let node_of_seq seq : Node.t =
-      let children_seq, pivots_seq = Seq.unzip seq in
-      let children = List.of_seq children_seq in
-      let pivots =
-        List.of_seq @@ Seq.take (List.length children - 1) pivots_seq
-      in
-      assert (List.length pivots = List.length children - 1);
-      { children; pivots }
+      Node.replace_child ~pos child node |> alloc
 
     let split_child ~pos child1 child2 (node : Node.t) =
-      let* pivot1 = get_min_key child1 in
-      let* pivot2 = get_min_key child2 in
       let child_count = Node.count node + 1 in
       let left_seq, right_seq =
-        Seq.zip
-          (List.to_seq node.children)
-          (Seq.append (List.to_seq node.pivots) (Seq.return max_pivot))
+        node |> List.to_seq
         (* Insert the new children *)
-        |> Seq.mapi (fun i (child, pivot) ->
-               if i = pos - 1 then Seq.return (child, pivot1)
-               else if i = pos then
-                 List.to_seq [ (child1, pivot2); (child2, pivot) ]
-               else Seq.return (child, pivot))
+        |> Seq.mapi (fun i child ->
+               if i = pos - 1 then Seq.return child
+               else if i = pos then List.to_seq [ child1; child2 ]
+               else Seq.return child)
         |> Seq.concat
         (* Split node *)
         |> Seq.mapi (fun i child_pivot ->
@@ -237,12 +220,12 @@ module Allocator = struct
         |> Seq.partition_map Fun.id
       in
       if Seq.is_empty right_seq then
-        let node = node_of_seq left_seq in
+        let node = List.of_seq left_seq in
         let* id = alloc node in
         return @@ Either.left id
       else
-        let left = node_of_seq left_seq in
-        let right = node_of_seq right_seq in
+        let left = List.of_seq left_seq in
+        let right = List.of_seq right_seq in
         let* left_id = alloc left in
         let* right_id = alloc right in
         return @@ Either.right (left_id, right_id)
