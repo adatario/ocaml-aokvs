@@ -162,36 +162,6 @@ module Zipper = struct
     | { page = Node _; _ } ->
         (* not yet at leaf *)
         search_page key t |> update key f
-
-  (* let merge_leaf ~pages leaf t = *)
-  (*   let open Page.Allocator in *)
-  (*   ignore pages; *)
-  (*   traceln "merge_leaf - t: %a, leaf: %a" pp t Page.Leaf.pp leaf; *)
-  (*   return t.id *)
-
-  (* let rec remove_key ~pages key t = *)
-  (*   let open Page.Allocator in *)
-  (*   match t with *)
-  (*   | { page = Leaf leaf; _ } when not (Page.Leaf.mem key leaf) -> *)
-  (*       (\* Nothing to do *\) *)
-  (*       return @@ root_id t *)
-  (*   | { page = Leaf leaf; _ } -> *)
-  (*       let leaf' = Page.Leaf.delete key leaf in *)
-  (*       if Page.Leaf.count leaf' < branching_factor / 2 then ( *)
-  (*         match t.up with *)
-  (*         | Some up -> merge_leaf ~pages leaf' up *)
-  (*         | None -> *)
-  (*             (\* we are the root *\) *)
-  (*             let* new_id = alloc in *)
-  (*             Page.set pages new_id (Page.Leaf leaf'); *)
-  (*             return new_id) *)
-  (*       else *)
-  (*         let* new_id = alloc in *)
-  (*         Page.set pages new_id (Page.Leaf leaf'); *)
-  (*         replace ~pages ~old:t.id ~new':new_id t.up *)
-  (*   | { page = Node _; _ } -> *)
-  (*       (\* descend to leaf node and try again *\) *)
-  (*       search_page ~pages key t |> remove_key ~pages key *)
 end
 
 type t = { pages : Page.pages; mutable next_free : int; mutable root : Page.id }
