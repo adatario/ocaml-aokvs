@@ -7,7 +7,7 @@
  ((guix licenses) #:prefix license:)
  (gnu packages ocaml)
  (gnu packages libevent)
- (ocaml))
+ (tarides packages ocaml))
 
 
 (define-public ocaml-omdb
