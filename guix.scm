@@ -6,7 +6,9 @@
  (guix build-system ocaml)
  ((guix licenses) #:prefix license:)
  (gnu packages ocaml)
- (gnu packages libevent))
+ (gnu packages libevent)
+ (ocaml))
+
 
 (define-public ocaml-omdb
   (package-with-ocaml5.0
@@ -20,6 +22,8 @@
      (list ocaml5.0-eio
 	   ocaml5.0-eio-main
 	   libuv
+	   ocaml-cstruct
+	   ocaml-ppx-cstruct
 	   ocaml-fmt))
     (native-inputs
      (list ocaml-alcotest

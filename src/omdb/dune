@@ -1,3 +1,4 @@
 (library
   (name omdb)
-  (libraries eio fmt))
+  (libraries eio cstruct bigstringaf fmt)
+  (preprocess (pps ppx_cstruct)))

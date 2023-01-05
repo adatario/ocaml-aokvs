@@ -14,15 +14,18 @@ let with_file path f =
       match Eio_unix.FD.peek_opt file with
       | Some fd ->
           Unix.ftruncate fd (page_size * 1024);
-          let mmap = Unix.map_file fd Char c_layout true [| -1; page_size |] in
+          let mmap =
+            Unix.map_file fd Char c_layout true [| -1; page_size |]
+            |> array2_of_genarray
+          in
           f mmap file
       | None -> failwith "could not open file")
 
-let main mmap file =
+let main memory_map file =
   ignore file;
-  traceln "\nmmap dim: %a" Fmt.(array ~sep:semi int) (Genarray.dims mmap);
+  traceln "\nmmap dim: %d" (Array2.dim2 memory_map);
 
-  let db = Omdb.init () in
+  let db = Omdb.init memory_map in
 
   let inserts =
     [
