@@ -164,24 +164,6 @@ module Leaf = struct
     (* return new max_offset *)
     value_offset
 
-  let write_records t records =
-    let header = header t in
-    Header.set_t_magic_number header magic_number;
-    Header.set_t_left header (Int64.of_int 0);
-    Header.set_t_right header (Int64.of_int 0);
-
-    let i, max_offset =
-      Seq.fold_left
-        (fun (i, max_offset) record ->
-          let record_entry = record_entry t i in
-          let max_offset = write_record ~max_offset ~record_entry t record in
-          (i + 1, max_offset))
-        (0, 0) records
-    in
-
-    Header.set_t_count header i;
-    Header.set_t_max_offset header max_offset
-
   let get_from_offset ~off ~len t =
     Bigstringaf.substring ~off:(page_size - off) ~len t
 
@@ -235,40 +217,48 @@ module Leaf = struct
 
   (* Allocation *)
 
-  let empty =
-    let* id, page = alloc_page () in
+  (* Calees of `alloc_records` must make sure that records fit into one page. *)
+  let alloc_records ?(left = Int64.of_int 0) ?(right = Int64.of_int 0) records =
+    let* id, t = alloc_page () in
 
-    (* Set the header *)
-    let header = header page in
+    let header = header t in
     Header.set_t_magic_number header magic_number;
-    Header.set_t_count header 0;
-    Header.set_t_max_offset header 0;
     Header.set_t_left header (Int64.of_int 0);
     Header.set_t_right header (Int64.of_int 0);
 
+    let i, max_offset =
+      Seq.fold_left
+        (fun (i, max_offset) record ->
+          let record_entry = record_entry t i in
+          let max_offset = write_record ~max_offset ~record_entry t record in
+          (i + 1, max_offset))
+        (0, 0) records
+    in
+
+    Header.set_t_count header i;
+    Header.set_t_max_offset header max_offset;
+    Header.set_t_left header left;
+    Header.set_t_right header right;
+
+    return (id, t)
+
+  let empty =
+    let* id, _page = alloc_records Seq.empty in
     return id
 
   let singleton record =
-    let* id, page = alloc_page () in
-
-    (* Set the header *)
-    let header = header page in
-    Header.set_t_magic_number header magic_number;
-    Header.set_t_count header 1;
-    Header.set_t_left header (Int64.of_int 0);
-    Header.set_t_right header (Int64.of_int 0);
-
-    (* write the record *)
-    let record_entry = record_entry page 0 in
-    let max_offset = write_record ~max_offset:0 ~record_entry page record in
-
-    (* set the max_offset in the header *)
-    Header.set_t_max_offset header max_offset;
+    let* id, _page = alloc_records @@ Seq.return record in
 
     return { id; min_key = fst record }
 
   let add t (key, value) =
     if has_space t (key, value) then (
+      (* We don't use the alloc_records, instead we copy all the
+         records as is from the old page and append the new record. This
+         should be more efficient as we do a single larger `blit`
+         operation instead of many smaller ones. A.k.a premature
+         optimiazation... *)
+
       (* the old header *)
       let header_old = header t in
 
@@ -282,7 +272,7 @@ module Leaf = struct
       Header.set_t_left header_new (Header.get_t_left header_old);
       Header.set_t_right header_new (Header.get_t_right header_old);
 
-      (* copy existing records *)
+      (* Copy existing records *)
       Bigstringaf.blit t
         ~src_off:(page_size - max_offset t)
         t_new
@@ -359,22 +349,24 @@ module Leaf = struct
         |> Seq.filter_map snd |> Seq.memoize |> Seq.partition_map Fun.id
       in
 
-      (* the old header *)
+      (* header of the old page *)
       let header_old = header t in
 
-      let* id_left, left = alloc_page () in
-      write_records left records_left;
+      (* Allocate left child with left pointer to the old left. *)
+      let* id_left, left =
+        alloc_records ~left:(Header.get_t_left header_old) records_left
+      in
 
-      let* id_right, right = alloc_page () in
-      write_records right records_right;
+      (* Allocate right child with right pointer to the old rigth. *)
+      let* id_right, right =
+        alloc_records ~right:(Header.get_t_right header_old) records_right
+      in
 
-      let header_left = header left in
-      Header.set_t_left header_left (Header.get_t_left header_old);
-      Header.set_t_right header_left (Int64.of_int id_right);
+      (* Set the right pointer of the left child to the right child. *)
+      Header.set_t_right (header left) (Int64.of_int id_right);
 
-      let header_right = header right in
-      Header.set_t_left header_right (Int64.of_int id_left);
-      Header.set_t_right header_right (Header.get_t_right header_old);
+      (* Set the left pointer of the right child to the left child. *)
+      Header.set_t_left (header right) (Int64.of_int id_left);
 
       let child_left = { id = id_left; min_key = min_key left } in
       let child_right = { id = id_right; min_key = min_key right } in
