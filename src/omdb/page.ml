@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: ISC
  *)
 
+open Eio
 open Bigarray
 open Record
 
@@ -30,11 +31,14 @@ type page = any_kind page_kind
 
 type id = int
 
+let id_equal = Int.equal
 let pp_id = Fmt.(styled `Cyan @@ int)
 
 (* Getting a page *)
 
-let get_page memory_map id = Array2.slice_left memory_map id
+let get_page memory_map id =
+  traceln "get_page %a" pp_id id;
+  Array2.slice_left memory_map id
 
 (* Allocator *)
 
@@ -42,16 +46,9 @@ module Allocator = struct
   type allocator = { next_free : id; memory_map : memory_map }
   type 'a t = allocator -> 'a * allocator
 
+  (* Combinators *)
+
   let return v allocator = (v, allocator)
-
-  let id () allocator =
-    (allocator.next_free, { allocator with next_free = allocator.next_free + 1 })
-
-  let alloc_page () : (id * page) t =
-   fun allocator ->
-    let id = allocator.next_free in
-    let page = get_page allocator.memory_map id in
-    ((id, page), { allocator with next_free = id + 1 })
 
   let map a f allocator =
     let v, allocator' = a allocator in
@@ -64,6 +61,21 @@ module Allocator = struct
     (f a_v) a_allocator
 
   let ( let* ) = bind
+
+  (* page allocation primitive *)
+
+  let alloc_page () : (id * page) t =
+   fun allocator ->
+    let id = allocator.next_free in
+    let page = get_page allocator.memory_map id in
+    ((id, page), { allocator with next_free = id + 1 })
+
+  (* Utilities *)
+
+  let get_page id : page t =
+   fun allocator ->
+    let page = get_page allocator.memory_map id in
+    (page, allocator)
 
   module Unsafe = struct
     let run ~memory_map ~next_free t =
@@ -130,7 +142,7 @@ module Leaf = struct
 
   (* Records *)
 
-  let write_record ~max_offset ~key ~value ~record_entry page =
+  let write_record ~max_offset ~record_entry page (key, value) =
     (* write key *)
     let key_length = String.length key in
     let key_offset = max_offset + key_length in
@@ -151,6 +163,24 @@ module Leaf = struct
 
     (* return new max_offset *)
     value_offset
+
+  let write_records t records =
+    let header = header t in
+    Header.set_t_magic_number header magic_number;
+    Header.set_t_left header (Int64.of_int 0);
+    Header.set_t_right header (Int64.of_int 0);
+
+    let i, max_offset =
+      Seq.fold_left
+        (fun (i, max_offset) record ->
+          let record_entry = record_entry t i in
+          let max_offset = write_record ~max_offset ~record_entry t record in
+          (i + 1, max_offset))
+        (0, 0) records
+    in
+
+    Header.set_t_count header i;
+    Header.set_t_max_offset header max_offset
 
   let get_from_offset ~off ~len t =
     Bigstringaf.substring ~off:(page_size - off) ~len t
@@ -183,6 +213,7 @@ module Leaf = struct
     let record_entry = record_entry t pos in
     (get_key t record_entry, get_value t record_entry)
 
+  let records t = Seq.init (count t) (get_record t)
   let min_key t = get_key t @@ record_entry t 0
 
   let free_space t =
@@ -195,6 +226,12 @@ module Leaf = struct
       String.length key + String.length value + Record_entry.sizeof_t
     in
     free_space t >= required_space
+
+  let pp ppf t =
+    Fmt.(pf ppf "%a" @@ brackets @@ seq ~sep:semi pp_record)
+      (Seq.map (fun record_entry ->
+           (get_key t record_entry, get_value t record_entry))
+      @@ record_entries t)
 
   (* Allocation *)
 
@@ -211,7 +248,7 @@ module Leaf = struct
 
     return id
 
-  let singleton (key, value) =
+  let singleton record =
     let* id, page = alloc_page () in
 
     (* Set the header *)
@@ -223,14 +260,12 @@ module Leaf = struct
 
     (* write the record *)
     let record_entry = record_entry page 0 in
-    let max_offset =
-      write_record ~max_offset:0 ~key ~value ~record_entry page
-    in
+    let max_offset = write_record ~max_offset:0 ~record_entry page record in
 
     (* set the max_offset in the header *)
     Header.set_t_max_offset header max_offset;
 
-    return { id; min_key = key }
+    return { id; min_key = fst record }
 
   let add t (key, value) =
     if has_space t (key, value) then (
@@ -281,10 +316,9 @@ module Leaf = struct
                    set_t_value_length new' (get_t_value_length old);
 
                    (i + 1, max_offset)
-               | Either.Right (key, value) ->
+               | Either.Right record ->
                    let max_offset =
-                     write_record ~max_offset ~key ~value ~record_entry:new'
-                       t_new
+                     write_record ~max_offset ~record_entry:new' t_new record
                    in
                    (i + 1, max_offset))
              (0, max_offset t)
@@ -295,17 +329,61 @@ module Leaf = struct
 
       (* return the id and the minimal key *)
       return @@ Either.left { id; min_key = min_key t_new })
-    else failwith "TODO"
+    else
+      (* leaf needs to be split in two *)
+
+      (* the total required space (minus headers) *)
+      let total_required_space =
+        max_offset t
+        + ((count t + 1) * Record_entry.sizeof_t)
+        + String.length key + String.length value
+      in
+
+      let threshold = total_required_space / 2 in
+
+      let records_left, records_right =
+        Seq.sorted_merge compare_record (records t) (Seq.return (key, value))
+        |> Seq.map (fun record -> record)
+        |> Seq.scan
+             (fun (used_space, _) record ->
+               let required_space =
+                 Record_entry.sizeof_t + String.length key + String.length value
+               in
+
+               if used_space + required_space <= threshold then
+                 (used_space + required_space, Option.some @@ Either.left record)
+               else
+                 ( used_space + required_space,
+                   Option.some @@ Either.right record ))
+             (0, None)
+        |> Seq.filter_map snd |> Seq.memoize |> Seq.partition_map Fun.id
+      in
+
+      (* the old header *)
+      let header_old = header t in
+
+      let* id_left, left = alloc_page () in
+      write_records left records_left;
+
+      let* id_right, right = alloc_page () in
+      write_records right records_right;
+
+      let header_left = header left in
+      Header.set_t_left header_left (Header.get_t_left header_old);
+      Header.set_t_right header_left (Int64.of_int id_right);
+
+      let header_right = header right in
+      Header.set_t_left header_right (Int64.of_int id_left);
+      Header.set_t_right header_right (Header.get_t_right header_old);
+
+      let child_left = { id = id_left; min_key = min_key left } in
+      let child_right = { id = id_right; min_key = min_key right } in
+
+      return @@ Either.right (child_left, child_right)
 
   let replace_value _t ~pos _value =
     ignore pos;
     failwith "TODO"
-
-  let pp ppf t =
-    Fmt.(pf ppf "%a" @@ brackets @@ seq ~sep:semi pp_record)
-      (Seq.map (fun record_entry ->
-           (get_key t record_entry, get_value t record_entry))
-      @@ record_entries t)
 
   (* let sort = List.stable_sort (fun (a, _) (b, _) -> String.compare a b) *)
 
@@ -388,7 +466,16 @@ module Node = struct
 
   (* Accessors *)
 
-  let child t i = Int64.to_int @@ Child_entry.get_t_page_id @@ child_entry t i
+  let child_id t i =
+    Int64.to_int @@ Child_entry.get_t_page_id @@ child_entry t i
+
+  let children t =
+    child_entries t
+    |> Seq.map (fun child_entry ->
+           {
+             id = Int64.to_int @@ Child_entry.get_t_page_id child_entry;
+             min_key = get_key t child_entry;
+           })
 
   let search t key =
     (* Sequence of pivots of the node. The lenght of the sequence is
@@ -409,7 +496,7 @@ module Node = struct
            | Some pivot -> if key < pivot then Some pos else None
            | None -> Some pos)
     |> Option.value ~default:0
-    |> fun pos -> (pos, child t pos)
+    |> fun pos -> (pos, child_id t pos)
 
   let min_key t = child_entry t 0 |> get_key t
 
@@ -425,7 +512,7 @@ module Node = struct
     Header.set_t_magic_number header magic_number;
 
     (* write child entries *)
-    let i, max_offset =
+    let count, max_offset =
       Seq.fold_left
         (fun (i, max_offset) child ->
           let child_entry = child_entry t i in
@@ -441,7 +528,7 @@ module Node = struct
     in
 
     (* set the count and max_offset in header *)
-    Header.set_t_count header (i + 1);
+    Header.set_t_count header count;
     Header.set_t_max_offset header max_offset;
 
     let min_key = min_key t in

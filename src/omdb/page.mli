@@ -20,6 +20,7 @@ type page
 
 type id
 
+val id_equal : id -> id -> bool
 val pp_id : id Fmt.t
 
 (** {2 Getting a page} *)
@@ -34,12 +35,17 @@ val get_page : memory_map -> id -> page
 module Allocator : sig
   type 'a t
 
+  (** {1 Combinators} *)
+
   val return : 'a -> 'a t
-  val id : unit -> id t
   val map : 'a t -> ('a -> 'b) -> 'b t
   val ( let+ ) : 'a t -> ('a -> 'b) -> 'b t
   val bind : 'a t -> ('a -> 'b t) -> 'b t
   val ( let* ) : 'a t -> ('a -> 'b t) -> 'b t
+
+  (** {1 Page retrieval} *)
+
+  val get_page : id -> page t
 
   module Unsafe : sig
     val run : memory_map:memory_map -> next_free:int -> 'a t -> 'a * int
@@ -76,6 +82,7 @@ module Leaf : sig
   val get_record : t -> int -> record
   (** [get leaf pos] returns the record at position [pos] in [leaf]. *)
 
+  val records : t -> record Seq.t
   val min_key : t -> key
   val free_space : t -> int
 
@@ -100,8 +107,11 @@ module Node : sig
 
   val count : t -> int
 
-  val child : t -> int -> id
-  (** [child node i] returns the [i]th child of the node. *)
+  val child_id : t -> int -> id
+  (** [child_id node i] returns the page id of the [i]th child of the node. *)
+
+  val children : t -> child Seq.t
+  (** [children node] returns a sequence of children contained in the node. *)
 
   val search : t -> key -> int * id
   (** [search node key] returns the id of the child. *)

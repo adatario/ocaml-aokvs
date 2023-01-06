@@ -29,25 +29,26 @@ let main memory_map file =
 
   let inserts =
     [
-      (0, 0);
-      (3, 0);
-      (10, 0);
-      (5, 0);
-      (6, 0);
-      (11, 0);
-      (4, 0);
-      (7, 0);
-      (50, 0);
-      (1, 0);
+      (0, "0");
+      (21, String.make 1024 'a');
+      (23, String.make 1024 'b');
+      (24, String.make 1024 'c');
+      (25, String.make 1024 'd')
+      (* (5, 0); *)
+      (* (6, 0); *)
+      (* (11, 0); *)
+      (* (4, 0); *)
+      (* (7, 0); *)
+      (* (50, 0); *)
+      (* (1, 0); *)
       (* (2, 0); *)
-      (* (51, 0); *)
+      (* (51, 0); *);
     ]
   in
 
   List.iter
     (fun (key, value) ->
-      Omdb.update db (string_of_int key)
-        (Fun.const @@ Option.some @@ string_of_int value))
+      Omdb.update db (string_of_int key) (Fun.const @@ Option.some @@ value))
     inserts;
 
   (* List.iter *)
@@ -73,7 +74,7 @@ let main memory_map file =
 
   (* Omdb.remove db 7; *)
   (* Omdb.remove db 8; *)
-  traceln "%a" Fmt.(option string) @@ Omdb.find db "3"
+  traceln "%a" Fmt.(option string) @@ Omdb.find db "21"
 
 let () =
   Eio_main.run @@ fun env ->
