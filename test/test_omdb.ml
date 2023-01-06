@@ -24,7 +24,7 @@ module Random = struct
   let test_insert_recrods =
     QCheck2.Test.make ~count:10 ~name:"Insert records" gen_events (fun events ->
         (* Init a databaes *)
-        let db = Omdb.init (Array2.create char c_layout 32 4096) in
+        let db = Omdb.init (Array2.create char c_layout 1024 4096) in
 
         (* Insert values into map and database *)
         let map =

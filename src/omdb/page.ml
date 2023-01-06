@@ -373,9 +373,17 @@ module Leaf = struct
 
       return @@ Either.right (child_left, child_right)
 
-  let replace_value _t ~pos _value =
-    ignore pos;
-    failwith "TODO"
+  let replace_value t ~pos value =
+    (* TODO: this does not check the new size of the value *)
+    let header = header t in
+    let* id, leaf =
+      records t
+      |> Seq.mapi (fun i (r_key, r_value) ->
+             if i = pos then (r_key, value) else (r_key, r_value))
+      |> alloc_records ~left:(Header.get_t_left header)
+           ~right:(Header.get_t_right header)
+    in
+    return { id; min_key = min_key leaf }
 
   (* let sort = List.stable_sort (fun (a, _) (b, _) -> String.compare a b) *)
 
