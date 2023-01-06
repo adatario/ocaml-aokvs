@@ -135,6 +135,42 @@ module Leaf = struct
 
         ())
 
+  let test_add_out_of_order =
+    Alcotest.test_case "add records out of order" `Quick (fun () ->
+        let memory_map = make_memory_map in
+
+        let records =
+          [ 0; 3; 6; 2; 7; 1; 5; 8; 9; 4 ] |> List.map test_record
+        in
+
+        let leaf_id, _ =
+          Omdb.Page.Allocator.(
+            Unsafe.run ~memory_map ~next_free:0
+              (List.fold_left
+                 (fun id_t record ->
+                   let* id = id_t in
+                   let* page = get_page id in
+                   let leaf = page |> Omdb.Page.Leaf.of_page |> Option.get in
+
+                   let* child_split = Omdb.Page.Leaf.add leaf record in
+                   let child = child_split |> Either.find_left |> Option.get in
+
+                   return child.id)
+                 Omdb.Page.Leaf.empty records))
+        in
+
+        let leaf =
+          Omdb.Page.get_page memory_map leaf_id
+          |> Omdb.Page.Leaf.of_page |> Option.get
+        in
+
+        Alcotest.(
+          check (list record_testable) "check records present are in order"
+            (List.init 10 test_record)
+            (List.of_seq @@ Omdb.Page.Leaf.records leaf));
+
+        ())
+
   let test_add_with_split =
     Alcotest.test_case "add records and cause a split" `Quick (fun () ->
         let memory_map = make_memory_map in
@@ -165,10 +201,6 @@ module Leaf = struct
                let* page = get_page child.id in
                let leaf = page |> Omdb.Page.Leaf.of_page |> Option.get in
 
-               (* let* child_split = Omdb.Page.Leaf.add leaf (test_record 3) in *)
-               (* let child = child_split |> Either.find_left |> Option.get in *)
-               (* let* page = get_page child.id in *)
-               (* let leaf = page |> Omdb.Page.Leaf.of_page |> Option.get in *)
                Omdb.Page.Leaf.add leaf (test_record 3)))
           |> fst |> Either.find_right |> Option.get
         in
@@ -200,6 +232,7 @@ module Leaf = struct
       test_allocate_empty;
       test_allocate_singleton;
       test_add;
+      test_add_out_of_order;
       test_add_with_split;
     ]
 end
