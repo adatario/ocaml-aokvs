@@ -86,6 +86,7 @@ end
 
 (* Helper Types *)
 
+(* TODO this should probably be called child_ref *)
 type child = { id : id; min_key : key }
 type split = (child, child * child) Either.t
 
@@ -537,13 +538,15 @@ module Node = struct
 
   let make left right = alloc_node @@ List.to_seq [ left; right ]
 
-  let replace_child _t ~pos _left_child _right_child =
-    ignore pos;
-    failwith "TODO"
+  let replace_child t ~pos new_child =
+    (* TODO split or merge if necessary *)
+    children t
+    |> Seq.mapi (fun i child -> if i = pos then new_child else child)
+    |> alloc_node
 
   let split_child _t ~pos _left_child _right_child =
     ignore pos;
-    failwith "TODO"
+    failwith "TODO split_child"
 
   let pp ppf t =
     Fmt.(

@@ -6,7 +6,7 @@
 
 open Bigarray
 
-let make_memory_map = Array2.create char c_layout 1024 4096
+let make_memory_map () = Array2.create char c_layout 1024 4096
 
 let record_testable =
   Alcotest.testable
@@ -61,7 +61,7 @@ module Leaf = struct
 
   let test_allocate_empty =
     Alcotest.test_case "allocate an empty leaf page" `Quick (fun () ->
-        let memory_map = make_memory_map in
+        let memory_map = make_memory_map () in
 
         let id, _next_free =
           Omdb.Page.Allocator.Unsafe.run ~memory_map ~next_free:0
@@ -80,7 +80,7 @@ module Leaf = struct
 
   let test_allocate_singleton =
     Alcotest.test_case "allocate a singleton" `Quick (fun () ->
-        let memory_map = make_memory_map in
+        let memory_map = make_memory_map () in
 
         let key, value = test_record 1 in
 
@@ -106,7 +106,7 @@ module Leaf = struct
 
   let test_add =
     Alcotest.test_case "add a record to an existing leaf" `Quick (fun () ->
-        let memory_map = make_memory_map in
+        let memory_map = make_memory_map () in
 
         let leaf_child =
           Omdb.Page.Allocator.(
@@ -137,7 +137,7 @@ module Leaf = struct
 
   let test_add_out_of_order =
     Alcotest.test_case "add records out of order" `Quick (fun () ->
-        let memory_map = make_memory_map in
+        let memory_map = make_memory_map () in
 
         let records =
           [ 0; 3; 6; 2; 7; 1; 5; 8; 9; 4 ] |> List.map test_record
@@ -173,7 +173,7 @@ module Leaf = struct
 
   let test_add_with_split =
     Alcotest.test_case "add records and cause a split" `Quick (fun () ->
-        let memory_map = make_memory_map in
+        let memory_map = make_memory_map () in
 
         (* test records are big (256 bytes values) *)
         let test_record i = ("KEY_" ^ string_of_int i, String.make 1024 'X') in
@@ -241,7 +241,7 @@ module Node = struct
   let test_make =
     Alcotest.test_case "make a node with two leaves as children" `Quick
       (fun () ->
-        let memory_map = make_memory_map in
+        let memory_map = make_memory_map () in
 
         let allocator =
           Omdb.Page.Allocator.(
