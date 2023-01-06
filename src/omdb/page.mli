@@ -40,8 +40,10 @@ module Allocator : sig
   val return : 'a -> 'a t
   val map : 'a t -> ('a -> 'b) -> 'b t
   val ( let+ ) : 'a t -> ('a -> 'b) -> 'b t
+  val ( >>| ) : 'a t -> ('a -> 'b) -> 'b t
   val bind : 'a t -> ('a -> 'b t) -> 'b t
   val ( let* ) : 'a t -> ('a -> 'b t) -> 'b t
+  val ( >>= ) : 'a t -> ('a -> 'b t) -> 'b t
 
   (** {1 Page retrieval} *)
 

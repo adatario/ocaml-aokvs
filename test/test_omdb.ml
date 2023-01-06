@@ -28,6 +28,7 @@ module Basic = struct
 
   let test_multiple_leaves =
     Alcotest.test_case "insert more records than what fits in a leaf" `Quick
+      (* This tests the split logic in `Page.Leaf.add`. *)
       (fun () ->
         let memory_map = make_memory_map () in
 
@@ -45,7 +46,8 @@ module Basic = struct
                  @@ Omdb.find db key)))
 
   let test_multiple_nodes =
-    Alcotest.test_case "insert more records than fits in two leaves" `Quick
+    Alcotest.test_case "insert more records than what fits in two leaves" `Quick
+      (* This tests `Page.Node.replace_child` *)
       (fun () ->
         let memory_map = make_memory_map () in
 
@@ -64,8 +66,33 @@ module Basic = struct
                    (Some value)
                  @@ Omdb.find db key)))
 
+  let test_node_split_child =
+    Alcotest.test_case "insert more records than what fits in three leaves"
+      `Quick (* This tests `Page.Node.replace_child` *) (fun () ->
+        let memory_map = make_memory_map () in
+
+        let db = Omdb.init memory_map in
+
+        (* TODO figure out heuristics to compute how many records of
+           what size need to be inserted *)
+        Seq.init 25 large_test_record
+        |> Seq.iter (fun (key, value) ->
+               Omdb.update db key (Fun.const @@ Some value));
+
+        Seq.init 25 large_test_record
+        |> Seq.iter (fun (key, value) ->
+               Alcotest.(
+                 check (option string) "Can retrieve inserted value"
+                   (Some value)
+                 @@ Omdb.find db key)))
+
   let test_cases =
-    [ test_single_record; test_multiple_leaves; test_multiple_nodes ]
+    [
+      test_single_record;
+      test_multiple_leaves;
+      test_multiple_nodes;
+      test_node_split_child;
+    ]
 end
 
 module Property_based = struct

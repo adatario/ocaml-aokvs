@@ -55,12 +55,14 @@ module Allocator = struct
     (f v, allocator')
 
   let ( let+ ) = map
+  let ( >>| ) = map
 
   let bind a f allocator =
     let a_v, a_allocator = a allocator in
     (f a_v) a_allocator
 
   let ( let* ) = bind
+  let ( >>= ) = bind
 
   (* page allocation primitive *)
 
@@ -501,6 +503,11 @@ module Node = struct
 
   let min_key t = child_entry t 0 |> get_key t
 
+  let free_space t =
+    let max_offset = Header.get_t_max_offset @@ header t in
+    let count = count t in
+    page_size - Header.sizeof_t - (count * Child_entry.sizeof_t) - max_offset
+
   (* Allocators *)
 
   open Allocator
@@ -544,9 +551,30 @@ module Node = struct
     |> Seq.mapi (fun i child -> if i = pos then new_child else child)
     |> alloc_node
 
-  let split_child _t ~pos _left_child _right_child =
-    ignore pos;
-    failwith "TODO split_child"
+  let split_child t ~pos left_child right_child =
+    let key_lenght_of_child_to_replace =
+      Child_entry.get_t_key_length @@ child_entry t pos
+    in
+
+    let required_space =
+      (* size of new keys that need to be stored *)
+      String.length left_child.min_key
+      + String.length right_child.min_key
+      (* minus the size of the key to be replaced *)
+      - key_lenght_of_child_to_replace
+      (* plus one additional child_entry *)
+      + Child_entry.sizeof_t
+    in
+
+    let has_space = free_space t >= required_space in
+
+    if has_space then
+      children t
+      |> Seq.mapi (fun i child ->
+             if i = pos then List.to_seq [ left_child; right_child ]
+             else Seq.return child)
+      |> Seq.concat |> alloc_node >>| Either.left
+    else failwith "TODO split_child causes a node split"
 
   let pp ppf t =
     Fmt.(
@@ -560,9 +588,6 @@ module Node = struct
              field "min_key" (fun child_entry -> get_key t child_entry) pp_key;
            ])
       (child_entries t)
-
-  (* let replace_child ~pos new_child node = *)
-  (* List.mapi (fun i c -> if i = pos then new_child else c) node *)
 end
 
 (* type t_id = id * t *)
