@@ -19,7 +19,7 @@ The space used to present a database steate in a transaction is only reclaimed o
 
 ** MirageOS
 
-Omdb uses mapped memory (on Unix with the Stdlib's [[https://v2.ocaml.org/api/Unix.html#VALmap_file][~Unix.map_file~]]). There are no further system requirements.
+Omdb uses mapped memory that is presented as a `Bigarray.Array2.t`. On Unix this can be done with ~Unix.map_file~ (and ~Unix.flush_map_file~ see [[https://github.com/ocaml/ocaml/pull/1432][ocaml/ocaml #1432]]). There are no further system requirements.
 
 Previous experiments have shown that it is possible to memory map block devices in MirageOS: [[https://mirage.io/blog/xen-block-devices-with-mirage][Creating Xen block devices with MirageOS]].
 
