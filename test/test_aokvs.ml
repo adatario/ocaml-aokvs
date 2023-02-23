@@ -15,16 +15,16 @@ module Basic = struct
     Alcotest.test_case "insert an retrieve a single record" `Quick (fun () ->
         let memory_map = make_memory_map () in
 
-        let db = Omdb.init memory_map in
+        let db = Aokvs.init memory_map in
 
         let key = "MY_KEY" in
         let value = "MY_VALUE" in
 
-        Omdb.update db key (Fun.const @@ Some value);
+        Aokvs.update db key (Fun.const @@ Some value);
 
         Alcotest.(
           check (option string) "Can retrieve inserted value" (Some value)
-          @@ Omdb.find db key))
+          @@ Aokvs.find db key))
 
   let test_multiple_leaves =
     Alcotest.test_case "insert more records than what fits in a leaf" `Quick
@@ -32,18 +32,18 @@ module Basic = struct
       (fun () ->
         let memory_map = make_memory_map () in
 
-        let db = Omdb.init memory_map in
+        let db = Aokvs.init memory_map in
 
         Seq.init 10 large_test_record
         |> Seq.iter (fun (key, value) ->
-               Omdb.update db key (Fun.const @@ Some value));
+               Aokvs.update db key (Fun.const @@ Some value));
 
         Seq.init 10 large_test_record
         |> Seq.iter (fun (key, value) ->
                Alcotest.(
                  check (option string) "Can retrieve inserted value"
                    (Some value)
-                 @@ Omdb.find db key)))
+                 @@ Aokvs.find db key)))
 
   let test_multiple_nodes =
     Alcotest.test_case "insert more records than what fits in two leaves" `Quick
@@ -51,40 +51,40 @@ module Basic = struct
       (fun () ->
         let memory_map = make_memory_map () in
 
-        let db = Omdb.init memory_map in
+        let db = Aokvs.init memory_map in
 
         (* TODO figure out heuristics to compute how many records of
            what size need to be inserted *)
         Seq.init 20 large_test_record
         |> Seq.iter (fun (key, value) ->
-               Omdb.update db key (Fun.const @@ Some value));
+               Aokvs.update db key (Fun.const @@ Some value));
 
         Seq.init 20 large_test_record
         |> Seq.iter (fun (key, value) ->
                Alcotest.(
                  check (option string) "Can retrieve inserted value"
                    (Some value)
-                 @@ Omdb.find db key)))
+                 @@ Aokvs.find db key)))
 
   let test_node_split_child =
     Alcotest.test_case "insert more records than what fits in three leaves"
       `Quick (* This tests `Page.Node.replace_child` *) (fun () ->
         let memory_map = make_memory_map () in
 
-        let db = Omdb.init memory_map in
+        let db = Aokvs.init memory_map in
 
         (* TODO figure out heuristics to compute how many records of
            what size need to be inserted *)
         Seq.init 25 large_test_record
         |> Seq.iter (fun (key, value) ->
-               Omdb.update db key (Fun.const @@ Some value));
+               Aokvs.update db key (Fun.const @@ Some value));
 
         Seq.init 25 large_test_record
         |> Seq.iter (fun (key, value) ->
                Alcotest.(
                  check (option string) "Can retrieve inserted value"
                    (Some value)
-                 @@ Omdb.find db key)))
+                 @@ Aokvs.find db key)))
 
   let test_cases =
     [
@@ -103,7 +103,7 @@ module Property_based = struct
   (* let gen_value = QCheck2.Gen.string_printable *)
   let gen_value = QCheck2.Gen.(small_nat |> map string_of_int)
 
-  (* type event = Omdb.key * Omdb.value *)
+  (* type event = Aokvs.key * Aokvs.value *)
 
   let gen_events =
     let open QCheck2.Gen in
@@ -112,7 +112,7 @@ module Property_based = struct
   let test_insert_recrods =
     QCheck2.Test.make ~count:10 ~name:"Insert records" gen_events (fun events ->
         (* Init a databaes *)
-        let db = Omdb.init (Array2.create char c_layout 1024 4096) in
+        let db = Aokvs.init (Array2.create char c_layout 1024 4096) in
 
         (* Insert values into map and database *)
         let map =
@@ -121,7 +121,7 @@ module Property_based = struct
               match event with
               | key, value ->
                   let () =
-                    Omdb.update db key (Fun.const @@ Option.some value)
+                    Aokvs.update db key (Fun.const @@ Option.some value)
                   in
                   Map.update key (Fun.const @@ Option.some value) map)
             Map.empty events
@@ -131,7 +131,7 @@ module Property_based = struct
         (* Map.to_seq map *)
         (* |> Seq.for_all *)
         (*      (fun key value -> *)
-        (*        match Omdb.find db key with *)
+        (*        match Aokvs.find db key with *)
         (*        | Some value_db -> *)
         (*            Alcotest.( *)
         (*              check string "value in DB matches expectation" value *)
@@ -141,7 +141,7 @@ module Property_based = struct
         (*      map; *)
         map |> Map.to_seq
         |> Seq.for_all (fun (key, value) ->
-               match Omdb.find db key with
+               match Aokvs.find db key with
                | Some value_db -> value = value_db
                | None ->
                    traceln "FAILURE: key-value (%s - %s) not found in DB" key
@@ -158,7 +158,7 @@ module Property_based = struct
 end
 
 let () =
-  Alcotest.run "Omdb"
+  Alcotest.run "Aokvs"
     [
       ("Basic", Basic.test_cases); ("Property-based", Property_based.test_cases);
     ]

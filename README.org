@@ -1,9 +1,9 @@
-#+TITLE: Omdb
-#+SUBTITLE: OCaml memory-mapped database
+#+TITLE: ocaml-aokvs
+#+SUBTITLE: An ordered-key-value-store
 
-Omdb is an ordered key-value store implemented in pure OCaml.
+Aokvs is an ordered key-value store implemented in pure OCaml.
 
-**WARNING** Omdb is an ongoing experiment and is not yet useable.
+**WARNING** Aokvs is an ongoing experiment and is not yet useable.
 
 * Rationale and Design Goals
 
@@ -13,25 +13,19 @@ Inspiration is taken from [[https://www.symas.com/lmdb][LMDB]], a key-value stor
 
 ** Multicore
 
-Like LMDB, Omdb supports multiple readers and a single writer. Readers do not block writes. Copy-on-write semantics are used when writing. Readers acquire read transactions which provide a consistent view of the database.
+Like LMDB, Aokvs supports multiple readers and a single writer. Readers do not block writes. Copy-on-write semantics are used when writing. Readers acquire read transactions which provide a consistent view of the database.
 
 The space used to present a database steate in a transaction is only reclaimed once the read transaction is ended. No garbage collection step is necessary as writers will automatically reclaim free space. The downside is that the total database size is always monotonically increasing. Long running read transactions cause the total database size to grow. This is similar to other databases (see for example the [[https://www.sqlite.org/lang_vacuum.html][SQLite VACUUM command]]).
 
-** MirageOS
-
-Omdb uses mapped memory that is presented as a `Bigarray.Array2.t`. On Unix this can be done with ~Unix.map_file~ (and ~Unix.flush_map_file~ see [[https://github.com/ocaml/ocaml/pull/1432][ocaml/ocaml #1432]]). There are no further system requirements.
-
-Previous experiments have shown that it is possible to memory map block devices in MirageOS: [[https://mirage.io/blog/xen-block-devices-with-mirage][Creating Xen block devices with MirageOS]].
-
 ** Ordered Key-Value Store and Complex Queries
 
-Omdb stores records (key-value pairs) sorted by the key and allows efficient range queries. This allows indices that can be used to perform complex queries on data (e.g. SQL or [[https://codeberg.org/openengiadina/ocaml-datalogl][Datalog]]). See also the Wikipedia page on [[https://en.wikipedia.org/wiki/Ordered_Key-Value_Store][Ordered Key-Value stores]], [[https://srfi.schemers.org/srfi-167/srfi-167.html][SRFI-167]] and [[https://inqlab.net/2022-07-01-geopub-a-multi-model-database.html][this post on multi-model databases]].
+Aokvs stores records (key-value pairs) sorted by the key and allows efficient range queries. This allows indices that can be used to perform complex queries on data (e.g. SQL or [[https://codeberg.org/openengiadina/ocaml-datalogl][Datalog]]). See also the Wikipedia page on [[https://en.wikipedia.org/wiki/Ordered_Key-Value_Store][Ordered Key-Value stores]], [[https://srfi.schemers.org/srfi-167/srfi-167.html][SRFI-167]] and [[https://inqlab.net/2022-07-01-geopub-a-multi-model-database.html][this post on multi-model databases]].
 
 This is strictly more than what the [[https://github.com/mirage/mirage-kv][Mirage_kv]] signatures allow.
 
 ** Code size
 
-The goal is to keep the code as small possible. Like LMDB, Omdb does not use any internal caches, instead data structures are made sure to be aligned to operating system and hardware caches.
+The goal is to keep the code as small possible. Like LMDB, Aokvs does not use any internal caches, instead data structures are made sure to be aligned to operating system and hardware caches.
 
 It also seems much easier to ensure correctness for small codebases. It would be interesting to use methodologies (e.g. [[https://en.wikipedia.org/wiki/DO-178C][DO-178C]]) and tools (e.g. [[https://github.com/ocaml-gospel/gospel][Gospel]]) to ensure a high-level of reliability. See also the [[https://www.sqlite.org/qmplan.html][SQLite Quality Management Plan]].
 
@@ -39,11 +33,11 @@ It also seems much easier to ensure correctness for small codebases. It would be
 
 ** [[https://www.symas.com/lmdb][LMDB]]
 
-Is the primary inspiration of Omdb. We use the same design and data structures.
+Is the primary inspiration of Aokvs. We use the same design and data structures.
 
 ** [[https://github.com/etcd-io/bbolt][Bolt]]
 
-A embedded key-value store implemented in the Go programming language. Like Omdb it is inspired by LMDB.
+A embedded key-value store implemented in the Go programming language. Like Aokvs it is inspired by LMDB.
 
 Bolt is successfully used in large-scale applications (e.g. [[https://etcd.io/][etcd]]).
 

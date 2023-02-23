@@ -25,7 +25,7 @@ let main memory_map file =
   ignore file;
   traceln "\nmmap dim: %d" (Array2.dim2 memory_map);
 
-  let db = Omdb.init memory_map in
+  let db = Aokvs.init memory_map in
 
   let inserts =
     [
@@ -48,7 +48,7 @@ let main memory_map file =
 
   List.iter
     (fun (key, value) ->
-      Omdb.update db (string_of_int key) (Fun.const @@ Option.some @@ value))
+      Aokvs.update db (string_of_int key) (Fun.const @@ Option.some @@ value))
     inserts;
 
   (* List.iter *)
@@ -74,7 +74,7 @@ let main memory_map file =
 
   (* Omdb.remove db 7; *)
   (* Omdb.remove db 8; *)
-  traceln "%a" Fmt.(option string) @@ Omdb.find db "21"
+  traceln "%a" Fmt.(option string) @@ Aokvs.find db "21"
 
 let () =
   Eio_main.run @@ fun env ->
