@@ -5,10 +5,7 @@
  *)
 
 open Eio
-open Bigarray
 include Record
-
-type memory_map = (char, int8_unsigned_elt, c_layout) Array2.t
 
 module Zipper = struct
   type page = Leaf of Page.Leaf.t | Node of Page.Node.t
@@ -18,8 +15,8 @@ module Zipper = struct
     | Leaf leaf -> Fmt.pf ppf "@[<5><Leaf %a>@]" Page.Leaf.pp leaf
     | Node node -> Fmt.pf ppf "@[<5><Node %a>@]" Page.Node.pp node
 
-  let get_page memory_map id =
-    let page = Page.get_page memory_map id in
+  let get_page pool id =
+    let page = Page.Pool.get_page pool id in
     match Page.Leaf.of_page page with
     | Some leaf -> Leaf leaf
     | None -> (
@@ -42,7 +39,7 @@ module Zipper = struct
        parent: (node t * int) option
     *)
     parent : (t * int) option;
-    memory_map : memory_map;
+    pool : Page.Pool.t;
   }
 
   let pp ppf =
@@ -59,8 +56,7 @@ module Zipper = struct
              @@ option int;
            ])
 
-  let of_root ~memory_map id =
-    { page = get_page memory_map id; id; parent = None; memory_map }
+  let of_root ~pool id = { page = get_page pool id; id; parent = None; pool }
 
   let rec to_root t =
     match t with
@@ -79,7 +75,7 @@ module Zipper = struct
     | Leaf _ -> t
     | Node node ->
         let pos, id = Page.Node.search node key in
-        { t with page = get_page t.memory_map id; id; parent = Some (t, pos) }
+        { t with page = get_page t.pool id; id; parent = Some (t, pos) }
         |> search_page key
 
   let find_record key t =
@@ -187,33 +183,29 @@ module Zipper = struct
         search_page key t |> update key f
 end
 
-type t = {
-  memory_map : memory_map;
-  mutable next_free : int;
-  mutable root : Page.id;
-}
+type t = { pool : Page.Pool.t; mutable next_free : int; mutable root : Page.id }
 
-let init memory_map =
+let init file =
   (* TODO: check dimensions *)
+  let pool = Page.Pool.init file in
   let root, next_free =
-    Page.Allocator.Unsafe.run ~memory_map ~next_free:0 Page.Leaf.empty
+    Page.Allocator.Unsafe.run ~pool ~next_free:0 Page.Leaf.empty
   in
 
-  { memory_map; next_free; root }
+  { pool; next_free; root }
 
 let update db key f =
   let root, next_free =
-    Zipper.of_root ~memory_map:db.memory_map db.root
+    Zipper.of_root ~pool:db.pool db.root
     |> Zipper.update key f
-    |> Page.Allocator.Unsafe.run ~memory_map:db.memory_map
-         ~next_free:db.next_free
+    |> Page.Allocator.Unsafe.run ~pool:db.pool ~next_free:db.next_free
   in
 
   db.next_free <- next_free;
   db.root <- root.id
 
 let find db key =
-  Zipper.of_root ~memory_map:db.memory_map db.root
+  Zipper.of_root ~pool:db.pool db.root
   |> Zipper.find_record key |> Option.map snd
 
 module Page = Page

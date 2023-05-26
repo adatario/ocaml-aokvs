@@ -5,47 +5,33 @@
  *)
 
 open Eio
-open Bigarray
 
-let page_size = 4096
-
-let with_file path f =
-  Path.with_open_out ~create:(`If_missing 0o600) path (fun file ->
-      match Eio_unix.FD.peek_opt file with
-      | Some fd ->
-          Unix.ftruncate fd (page_size * 1024);
-          let mmap =
-            Unix.map_file fd Char c_layout true [| -1; page_size |]
-            |> array2_of_genarray
-          in
-          f mmap file
-      | None -> failwith "could not open file")
-
-let main memory_map file =
-  ignore file;
-  traceln "\nmmap dim: %d" (Array2.dim2 memory_map);
-
-  let db = Aokvs.init memory_map in
+let main file =
+  (* let pool = Aokvs.Page.Pool.init file in *)
+  let db = Aokvs.init file in
 
   let inserts =
     [
       (0, "0");
       (21, String.make 1024 'a');
-      (23, String.make 1024 'b');
-      (24, String.make 1024 'c');
-      (25, String.make 1024 'd')
-      (* (5, 0); *)
-      (* (6, 0); *)
+      (* (23, String.make 1024 'b'); *)
+      (* (24, String.make 1024 'c'); *)
+      (* (25, String.make 1024 'd') *)
+      (5, "0");
+      (6, "0");
       (* (11, 0); *)
       (* (4, 0); *)
       (* (7, 0); *)
       (* (50, 0); *)
       (* (1, 0); *)
       (* (2, 0); *)
-      (* (51, 0); *);
+      (* (51, 0); *)
     ]
   in
 
+  (* let _page = Aokvs.Page.Pool.get_page pool 0 in *)
+
+  (* ignore inserts *)
   List.iter
     (fun (key, value) ->
       Aokvs.update db (string_of_int key) (Fun.const @@ Option.some @@ value))
@@ -74,9 +60,9 @@ let main memory_map file =
 
   (* Omdb.remove db 7; *)
   (* Omdb.remove db 8; *)
-  traceln "%a" Fmt.(option string) @@ Aokvs.find db "21"
+  traceln "%a" Fmt.(option string) @@ Aokvs.find db "0"
 
 let () =
   Eio_main.run @@ fun env ->
   let path = Path.(Stdenv.cwd env / "db") in
-  with_file path main
+  Path.with_open_out ~create:(`If_missing 0o600) path (fun file -> main file)

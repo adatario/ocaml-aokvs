@@ -3,14 +3,12 @@
  *
  * SPDX-License-Identifier: ISC
  *)
-open Bigarray
 
 (** Page *)
 
 type key = string
 type value = string
 type record = key * value
-type memory_map = (char, int8_unsigned_elt, c_layout) Array2.t
 
 (** {1 Page} *)
 
@@ -18,14 +16,20 @@ type page
 
 (** {2 Identifier} *)
 
-type id
+type id = int
 
 val id_equal : id -> id -> bool
 val pp_id : id Fmt.t
 
-(** {2 Getting a page} *)
+(** {2 Page Pool} *)
 
-val get_page : memory_map -> id -> page
+module Pool : sig
+  type t
+
+  val init : #Eio.File.rw -> t
+  val get_page : t -> id -> page
+  val write_page : t -> id -> page -> unit
+end
 
 (** {1 Allocator} *)
 
@@ -50,7 +54,7 @@ module Allocator : sig
   val get_page : id -> page t
 
   module Unsafe : sig
-    val run : memory_map:memory_map -> next_free:int -> 'a t -> 'a * int
+    val run : pool:Pool.t -> next_free:int -> 'a t -> 'a * int
   end
 end
 

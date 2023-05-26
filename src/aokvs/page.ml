@@ -5,10 +5,7 @@
  *)
 
 open Eio
-open Bigarray
 open Record
-
-type memory_map = (char, int8_unsigned_elt, c_layout) Array2.t
 
 let page_size = 4096
 
@@ -34,16 +31,45 @@ type id = int
 let id_equal = Int.equal
 let pp_id = Fmt.(styled `Cyan @@ int)
 
-(* Getting a page *)
+(* Page Pool *)
 
-let get_page memory_map id =
-  traceln "get_page %a" pp_id id;
-  Array2.slice_left memory_map id
+module Pool = struct
+  type t = Eio.File.rw
+
+  let init file =
+    let file = (file :> Eio.File.rw) in
+    file
+
+  let offset id = Optint.Int63.of_int @@ (page_size * id)
+
+  let get_page t id =
+    let buf = Cstruct.create page_size in
+    (try Eio.File.pread_exact t ~file_offset:(offset id) [ buf ]
+     with End_of_file -> ());
+    Cstruct.to_bigarray buf
+
+  let write_page t id page =
+    traceln "Pool.write_page ~id:%d" id;
+    let buf = Cstruct.of_bigarray page in
+    Eio.File.pwrite_all t ~file_offset:(offset id) [ buf ]
+end
 
 (* Allocator *)
 
 module Allocator = struct
-  type allocator = { next_free : id; memory_map : memory_map }
+  module PageTable = Hashtbl.Make (struct
+    type t = id
+
+    let equal = id_equal
+    let hash = Hashtbl.hash
+  end)
+
+  type allocator = {
+    next_free : id;
+    pool : Pool.t;
+    allocated : page PageTable.t;
+  }
+
   type 'a t = allocator -> 'a * allocator
 
   (* Combinators *)
@@ -67,21 +93,33 @@ module Allocator = struct
   (* page allocation primitive *)
 
   let alloc_page () : (id * page) t =
-   fun allocator ->
-    let id = allocator.next_free in
-    let page = get_page allocator.memory_map id in
-    ((id, page), { allocator with next_free = id + 1 })
+    traceln "alloc_page";
+    fun allocator ->
+      let id = allocator.next_free in
+      let page = Bigstringaf.create page_size in
+      PageTable.add allocator.allocated id page;
+      ((id, page), { allocator with next_free = id + 1 })
 
   (* Utilities *)
 
   let get_page id : page t =
    fun allocator ->
-    let page = get_page allocator.memory_map id in
-    (page, allocator)
+    match PageTable.find_opt allocator.allocated id with
+    (* If page has been allocated during by this allocator get directly from memory *)
+    | Some page -> (page, allocator)
+    (* else get it from the pool *)
+    | None ->
+        let page = Pool.get_page allocator.pool id in
+        (page, allocator)
 
   module Unsafe = struct
-    let run ~memory_map ~next_free t =
-      let v, { next_free; _ } = t { next_free; memory_map } in
+    let run ~pool ~next_free t =
+      let allocated = PageTable.create 50 in
+      let v, { next_free; _ } = t { next_free; pool; allocated } in
+
+      (* Write all freshly allocated pages *)
+      PageTable.iter (fun id page -> Pool.write_page pool id page) allocated;
+
       (v, next_free)
   end
 end
